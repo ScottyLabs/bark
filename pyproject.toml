@@ -22,8 +22,16 @@ dependencies = [
 ]
 
 [tool.uv]
-# Use CPU-only PyTorch index
-extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+# Only use PyTorch CPU index for torch, not other packages
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [project.scripts]
 bark = "bark.cli:main"
