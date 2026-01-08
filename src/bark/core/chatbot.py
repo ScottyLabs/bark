@@ -60,14 +60,23 @@ class ChatBot:
         if self._client:
             await self._client.__aexit__(*args)
 
-    def create_conversation(self, system_prompt: str | None = None) -> Conversation:
+    def create_conversation(
+        self,
+        system_prompt: str | None = None,
+        system_prompt_addendum: str | None = None,
+    ) -> Conversation:
         """Create a new conversation.
 
         Args:
             system_prompt: Optional custom system prompt. Uses default if not provided.
+            system_prompt_addendum: Optional addendum to append to the system prompt.
+                Useful for integration-specific instructions (e.g., Slack formatting).
         """
+        prompt = system_prompt or self.settings.system_prompt
+        if system_prompt_addendum:
+            prompt = f"{prompt}\n\n{system_prompt_addendum}"
         return Conversation(
-            system_prompt=system_prompt or self.settings.system_prompt,
+            system_prompt=prompt,
         )
 
     async def chat(

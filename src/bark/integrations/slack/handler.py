@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,20 @@ from bark.core.chatbot import ChatBot, Conversation
 from bark.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+# System prompt addendum for Slack-specific formatting
+SLACK_SYSTEM_ADDENDUM = """You are communicating through Slack. Use Slack's mrkdwn syntax for formatting:
+- Bold: *text* (not **text**)
+- Italic: _text_ (not *text*)
+- Strikethrough: ~text~
+- Code: `code` or ```code block```
+- Links: <URL|text>
+- Blockquotes: > text
+- Bullet lists: - item or • item
+
+Keep responses concise. Do not use standard markdown syntax.
+
+IMPORTANT: When you want to separate your response into multiple distinct messages, use double newlines (blank lines) between sections. Each section separated by blank lines will be sent as a separate Slack message."""
 
 
 @dataclass
@@ -22,6 +37,7 @@ class SlackEventHandler:
     _chatbot: ChatBot | None = None
     _conversations: dict[str, Conversation] = field(default_factory=dict)
     _processed_events: set[str] = field(default_factory=set)
+    _bot_threads: set[tuple[str, str]] = field(default_factory=set)
 
     async def __aenter__(self) -> "SlackEventHandler":
         """Enter async context."""
@@ -48,7 +64,9 @@ class SlackEventHandler:
         key = self._get_conversation_key(channel, thread_ts)
 
         if key not in self._conversations:
-            self._conversations[key] = self._chatbot.create_conversation()
+            self._conversations[key] = self._chatbot.create_conversation(
+                system_prompt_addendum=SLACK_SYSTEM_ADDENDUM
+            )
 
         return self._conversations[key]
 
@@ -105,8 +123,6 @@ class SlackEventHandler:
 
         # Remove the bot mention from the text
         # Mentions look like <@U123456>
-        import re
-
         text = re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
 
         if not text:
@@ -123,14 +139,9 @@ class SlackEventHandler:
         )
 
     async def _handle_message(self, event: dict[str, Any]) -> None:
-        """Handle a direct message event."""
+        """Handle a direct message or thread reply event."""
         # Ignore bot messages to prevent loops
         if event.get("bot_id") or event.get("subtype") == "bot_message":
-            return
-
-        # Only handle DMs (channel type 'im')
-        channel_type = event.get("channel_type")
-        if channel_type != "im":
             return
 
         channel = event.get("channel", "")
@@ -138,19 +149,27 @@ class SlackEventHandler:
         text = event.get("text", "")
         thread_ts = event.get("thread_ts")
         ts = event.get("ts", "")
+        channel_type = event.get("channel_type")
 
         if not text:
             return
 
-        logger.info(f"Handling DM from {user}: {text}")
+        # Handle DMs
+        if channel_type == "im":
+            logger.info(f"Handling DM from {user}: {text}")
+            conversation = self._get_or_create_conversation(channel, thread_ts)
+            asyncio.create_task(
+                self._process_and_respond(text, conversation, channel, thread_ts or ts)
+            )
+            return
 
-        # Get or create conversation for this DM
-        conversation = self._get_or_create_conversation(channel, thread_ts)
-
-        # Process in background
-        asyncio.create_task(
-            self._process_and_respond(text, conversation, channel, thread_ts or ts)
-        )
+        # Handle replies in threads where Bark has participated
+        if thread_ts and (channel, thread_ts) in self._bot_threads:
+            logger.info(f"Handling thread reply from {user} in {channel}: {text}")
+            conversation = self._get_or_create_conversation(channel, thread_ts)
+            asyncio.create_task(
+                self._process_and_respond(text, conversation, channel, thread_ts)
+            )
 
     async def _process_and_respond(
         self,
@@ -168,12 +187,26 @@ class SlackEventHandler:
             # Get response from chatbot
             response = await self._chatbot.chat(text, conversation)
 
-            # Send response to Slack
-            await self._client.chat_postMessage(
-                channel=channel,
-                text=response,
-                thread_ts=thread_ts,
-            )
+            # Split on unescaped double newlines (paragraph breaks)
+            # Each paragraph becomes a separate Slack message
+            messages = re.split(r'(?<!\\)\n\n+', response)
+
+            for msg in messages:
+                msg = msg.strip()
+                if msg:
+                    # Unescape any escaped newlines
+                    msg = msg.replace('\\n', '\n')
+                    await self._client.chat_postMessage(
+                        channel=channel,
+                        text=msg,
+                        thread_ts=thread_ts,
+                    )
+
+            # Track this thread so we respond to follow-up messages
+            self._bot_threads.add((channel, thread_ts))
+            # Clean up old threads (keep last 500)
+            if len(self._bot_threads) > 500:
+                self._bot_threads = set(list(self._bot_threads)[-250:])
 
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
