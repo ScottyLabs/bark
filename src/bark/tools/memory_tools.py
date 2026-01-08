@@ -131,16 +131,8 @@ async def delete_memory(key: str) -> str:
     description="Use this when you determine that no response is needed. For example, when a message wasn't directed at you, when someone is just chatting with others, or when your input wouldn't add value to the conversation.",
     parameters={
         "type": "object",
-        "properties": {
-            "reason": {
-                "type": "string",
-                "description": "Brief internal reason for not replying (for logging purposes)",
-            },
-        },
-        "required": ["reason"],
     },
 )
-async def no_reply(reason: str) -> str:
+async def no_reply() -> str:
     """Signal that no reply is needed."""
-    logger.info(f"Skipping reply: {reason}")
     return "__NO_REPLY__"

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from bark.context.chroma import ChromaClient, Document, SearchResult
 from bark.context.embeddings import EmbeddingGenerator
+from bark.context.summarizer import Summarizer
 from bark.context.wiki_loader import WikiLoader
 from bark.core.config import Settings, get_settings
 
@@ -18,6 +19,7 @@ class ContextEngine:
     settings: Settings = field(default_factory=get_settings)
     _chroma: ChromaClient | None = None
     _embedder: EmbeddingGenerator | None = None
+    _summarizer: Summarizer | None = None
     _loader: WikiLoader | None = None
 
     def _get_chroma(self) -> ChromaClient:
@@ -34,6 +36,12 @@ class ContextEngine:
         if self._embedder is None:
             self._embedder = EmbeddingGenerator()
         return self._embedder
+
+    def _get_summarizer(self) -> Summarizer:
+        """Get or create summarizer."""
+        if self._summarizer is None:
+            self._summarizer = Summarizer()
+        return self._summarizer
 
     def _get_loader(self) -> WikiLoader:
         """Get or create wiki loader."""
@@ -61,10 +69,15 @@ class ContextEngine:
             if not chunks:
                 return "No wiki content found to ingest."
 
-            # Generate embeddings (now async)
-            logger.info(f"Generating embeddings for {len(chunks)} chunks")
-            texts = [chunk.content for chunk in chunks]
-            embeddings = await embedder.embed_batch(texts)
+            # Summarize chunks for embedding (cheaper than embedding full content)
+            summarizer = self._get_summarizer()
+            logger.info(f"Summarizing {len(chunks)} chunks for embedding")
+            original_texts = [chunk.content for chunk in chunks]
+            summaries = await summarizer.summarize_batch(original_texts)
+
+            # Generate embeddings from summaries
+            logger.info(f"Generating embeddings for {len(summaries)} summaries")
+            embeddings = await embedder.embed_batch(summaries)
 
             # Create documents with embeddings
             documents = [

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     chroma_port: int = 8000
     wiki_repo_url: str = "https://github.com/ScottyLabs/wiki.wiki.git"
     embedding_model: str = "openai/text-embedding-3-small"
+    summarization_model: str = "google/gemini-2.0-flash-lite-001"
 
     # Bot Configuration
     system_prompt: str = """You are Bark, a helpful assistant for ScottyLabs (scottylabs.org). 

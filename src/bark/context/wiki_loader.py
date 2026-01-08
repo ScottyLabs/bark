@@ -56,7 +56,7 @@ class WikiLoader:
 
             # Find and parse all markdown files
             wiki_path = Path(temp_dir)
-            for md_file in wiki_path.glob("*.md"):
+            for md_file in wiki_path.rglob("*.md"):
                 file_chunks = self._parse_markdown_file(md_file)
                 chunks.extend(file_chunks)
 
