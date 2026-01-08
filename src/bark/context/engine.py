@@ -32,7 +32,7 @@ class ContextEngine:
     def _get_embedder(self) -> EmbeddingGenerator:
         """Get or create embedding generator."""
         if self._embedder is None:
-            self._embedder = EmbeddingGenerator(self.settings.embedding_model)
+            self._embedder = EmbeddingGenerator()
         return self._embedder
 
     def _get_loader(self) -> WikiLoader:
@@ -61,10 +61,10 @@ class ContextEngine:
             if not chunks:
                 return "No wiki content found to ingest."
 
-            # Generate embeddings
+            # Generate embeddings (now async)
             logger.info(f"Generating embeddings for {len(chunks)} chunks")
             texts = [chunk.content for chunk in chunks]
-            embeddings = embedder.embed_batch(texts)
+            embeddings = await embedder.embed_batch(texts)
 
             # Create documents with embeddings
             documents = [
@@ -106,8 +106,8 @@ class ContextEngine:
                 logger.warning("No documents in collection. Run refresh first.")
                 return []
 
-            # Generate query embedding
-            query_embedding = embedder.embed(query)
+            # Generate query embedding (now async)
+            query_embedding = await embedder.embed(query)
 
             # Search
             results = chroma.query(query_embedding, n_results=k)

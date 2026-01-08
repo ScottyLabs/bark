@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8000
     wiki_repo_url: str = "https://github.com/ScottyLabs/wiki.wiki.git"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model: str = "openai/text-embedding-3-small"
 
     # Bot Configuration
     system_prompt: str = """You are Bark, a helpful assistant for ScottyLabs (scottylabs.org). 

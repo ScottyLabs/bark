@@ -1,33 +1,36 @@
-"""Embedding generation using sentence-transformers."""
+"""Embedding generation using OpenRouter API."""
 
 import logging
-from functools import lru_cache
+from dataclasses import dataclass, field
 
-from sentence_transformers import SentenceTransformer
+import httpx
+
+from bark.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class EmbeddingGenerator:
-    """Generates embeddings using sentence-transformers."""
+    """Generates embeddings using OpenRouter's embedding API."""
 
-    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
-        """Initialize the embedding generator.
+    settings: Settings = field(default_factory=get_settings)
+    _client: httpx.AsyncClient | None = None
 
-        Args:
-            model_name: Name of the sentence-transformers model to use
-        """
-        self.model_name = model_name
-        self._model: SentenceTransformer | None = None
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                base_url=self.settings.openrouter_base_url,
+                headers={
+                    "Authorization": f"Bearer {self.settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=60.0,
+            )
+        return self._client
 
-    def _get_model(self) -> SentenceTransformer:
-        """Get or load the sentence transformer model."""
-        if self._model is None:
-            logger.info(f"Loading embedding model: {self.model_name}")
-            self._model = SentenceTransformer(self.model_name)
-        return self._model
-
-    def embed(self, text: str) -> list[float]:
+    async def embed(self, text: str) -> list[float]:
         """Generate an embedding for a single text.
 
         Args:
@@ -36,16 +39,15 @@ class EmbeddingGenerator:
         Returns:
             Embedding vector
         """
-        model = self._get_model()
-        embedding = model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
+        result = await self.embed_batch([text])
+        return result[0] if result else []
 
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
+    async def embed_batch(self, texts: list[str], batch_size: int = 100) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
             texts: List of texts to embed
-            batch_size: Batch size for encoding
+            batch_size: Batch size for API calls
 
         Returns:
             List of embedding vectors
@@ -53,17 +55,50 @@ class EmbeddingGenerator:
         if not texts:
             return []
 
-        model = self._get_model()
-        embeddings = model.encode(
-            texts,
-            batch_size=batch_size,
-            convert_to_numpy=True,
-            show_progress_bar=len(texts) > 100,
-        )
-        return [e.tolist() for e in embeddings]
+        client = await self._get_client()
+        all_embeddings: list[list[float]] = []
+
+        # Process in batches
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+
+            payload = {
+                "model": self.settings.embedding_model,
+                "input": batch,
+            }
+
+            try:
+                response = await client.post("/embeddings", json=payload)
+                response.raise_for_status()
+                data = response.json()
+
+                # Extract embeddings from response
+                for item in data.get("data", []):
+                    all_embeddings.append(item["embedding"])
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Embedding API error: {e.response.status_code} - {e.response.text}")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to generate embeddings: {e}")
+                raise
+
+        return all_embeddings
+
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
 
-@lru_cache
-def get_embedding_generator(model_name: str) -> EmbeddingGenerator:
-    """Get a cached embedding generator instance."""
-    return EmbeddingGenerator(model_name)
+# Global instance
+_generator: EmbeddingGenerator | None = None
+
+
+async def get_embedding_generator() -> EmbeddingGenerator:
+    """Get the global embedding generator instance."""
+    global _generator
+    if _generator is None:
+        _generator = EmbeddingGenerator()
+    return _generator

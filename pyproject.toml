@@ -16,22 +16,7 @@ dependencies = [
     # Context Engine
     "chromadb>=0.4.0",
     "gitpython>=3.1.0",
-    "sentence-transformers>=2.2.0",
-    # CPU-only PyTorch (saves ~2GB by excluding NVIDIA libraries)
-    "torch>=2.0.0",
 ]
-
-[tool.uv]
-# Only use PyTorch CPU index for torch, not other packages
-index-strategy = "unsafe-best-match"
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
 
 [project.scripts]
 bark = "bark.cli:main"
