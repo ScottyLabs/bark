@@ -55,9 +55,9 @@ class ChromaClient:
             )
             # Test connection
             self._client.heartbeat()
-            logger.info(f"Connected to ChromaDB at {self.host}:{self.port}")
+            logger.warning(f"Connected to ChromaDB at {self.host}:{self.port}.  There are {self.get_collection_count()} documents in the collection.")
         except Exception as e:
-            logger.warning(f"Failed to connect to ChromaDB: {e}. Using in-memory client.")
+            logger.warning(f"Failed to connect to ChromaDB at {self.host}:{self.port}: {e}. Using in-memory client.")
             self._client = chromadb.Client(
                 settings=ChromaSettings(anonymized_telemetry=False),
             )

@@ -89,6 +89,12 @@ class Summarizer:
         for i, content in enumerate(contents):
             if i > 0 and i % 10 == 0:
                 logger.info(f"Summarized {i}/{len(contents)} chunks")
+            
+            # Skip summarization for short content (e.g., less than 500 characters)
+            if len(content) < 500:
+                summaries.append(content)
+                continue
+
             summary = await self.summarize(content)
             summaries.append(summary)
         return summaries
