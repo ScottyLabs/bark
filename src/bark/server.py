@@ -11,6 +11,9 @@ from bark.core.config import get_settings
 from bark.integrations.slack.handler import SlackEventHandler
 from bark.integrations.slack.verification import verify_slack_signature_from_body
 
+# Import tools to register them
+import bark.tools  # noqa: F401
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

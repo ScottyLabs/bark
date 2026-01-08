@@ -127,6 +127,36 @@ bark/
    railway domain
    ```
 
+6. **For Context Engine**: Create a second Railway service for ChromaDB:
+   - Add a new service using the `chromadb/chroma` Docker image
+   - Set `CHROMA_HOST` in your Bark service to the ChromaDB service's internal hostname
+
+## Context Engine (RAG)
+
+Bark includes a RAG-based context engine that ingests the [ScottyLabs wiki](https://github.com/ScottyLabs/wiki/wiki) and provides semantic search.
+
+### Built-in Tools
+
+- **`search_wiki`**: Search the wiki for relevant information
+- **`refresh_context`**: Re-clone and re-ingest the wiki content
+
+### Local Development with Docker Compose
+
+```bash
+# Start ChromaDB
+docker-compose up -d chromadb
+
+# Run Bark locally (or use docker-compose up bark)
+uv run bark --serve
+```
+
+### Refreshing Context
+
+Ask Bark to refresh the wiki context when content changes:
+> "Hey Bark, please refresh the wiki context"
+
+Or trigger it programmatically via the tool system.
+
 ## Adding Custom Tools
 
 Tools extend Bark's capabilities. Here's how to add one:
@@ -170,7 +200,10 @@ import bark.tools.my_tools  # This registers the tools
 | `SLACK_SIGNING_SECRET` | Slack signing secret | Required for Slack |
 | `HOST` | Server host | `0.0.0.0` |
 | `PORT` | Server port | `8000` |
+| `CHROMA_HOST` | ChromaDB server host | `localhost` |
+| `CHROMA_PORT` | ChromaDB server port | `8000` |
 
 ## License
 
 MIT
+

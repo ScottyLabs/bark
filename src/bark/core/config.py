@@ -27,10 +27,16 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Context Engine Configuration
+    chroma_host: str = "localhost"
+    chroma_port: int = 8000
+    wiki_repo_url: str = "https://github.com/ScottyLabs/wiki.wiki.git"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
     # Bot Configuration
     system_prompt: str = """You are Bark, a helpful assistant for ScottyLabs (scottylabs.org). 
 You are friendly, concise, and helpful. You can use tools when available to help answer questions.
-Keep responses clear and to the point."""
+Keep responses clear and to the point. Use the search_wiki tool to find information from the ScottyLabs wiki when answering questions about ScottyLabs processes, projects, or policies."""
 
 
 @lru_cache

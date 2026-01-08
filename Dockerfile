@@ -4,6 +4,10 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
+# Install git for wiki cloning
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Enable bytecode compilation for faster startup
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_NO_PROGRESS=1
