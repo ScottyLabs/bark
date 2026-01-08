@@ -187,13 +187,18 @@ class SlackEventHandler:
             # Get response from chatbot
             response = await self._chatbot.chat(text, conversation)
 
+            # Check if bot decided not to reply
+            if response.strip() == "__NO_REPLY__":
+                logger.info("Bot chose not to reply")
+                return
+
             # Split on unescaped double newlines (paragraph breaks)
             # Each paragraph becomes a separate Slack message
             messages = re.split(r'(?<!\\)\n\n+', response)
 
             for msg in messages:
                 msg = msg.strip()
-                if msg:
+                if msg and msg != "__NO_REPLY__":
                     # Unescape any escaped newlines
                     msg = msg.replace('\\n', '\n')
                     await self._client.chat_postMessage(

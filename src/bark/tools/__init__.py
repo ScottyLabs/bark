@@ -36,3 +36,12 @@ async def search_wiki(query: str) -> str:
     """Search the wiki for relevant content."""
     engine = get_context_engine()
     return await engine.search_formatted(query)
+
+
+# Import memory tools to register them
+from bark.tools.memory_tools import (  # noqa: F401, E402
+    read_memory,
+    write_memory,
+    delete_memory,
+    no_reply,
+)
