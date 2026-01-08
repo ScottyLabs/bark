@@ -7,6 +7,23 @@ from bark.core.openrouter import Message, OpenRouterClient
 from bark.core.tools import ToolRegistry, get_registry
 
 
+def _load_memories() -> str:
+    """Load all memories and format them for context injection."""
+    try:
+        from bark.tools.memory_tools import _load_memory
+        memory = _load_memory()
+        if not memory:
+            return ""
+        
+        lines = ["", "**Your stored memories:**"]
+        for key, value in memory.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 @dataclass
 class Conversation:
     """Manages a single conversation's state."""
@@ -30,6 +47,25 @@ class Conversation:
     def get_messages(self) -> list[Message]:
         """Get all messages in the conversation."""
         return self.messages.copy()
+    
+    def update_system_with_memories(self) -> None:
+        """Update the system message with current memories."""
+        memories = _load_memories()
+        if not memories:
+            return
+        
+        # Find and update system message, or add one
+        for i, msg in enumerate(self.messages):
+            if msg.role == "system":
+                # Strip old memories section if present
+                content = msg.content or ""
+                if "**Your stored memories:**" in content:
+                    content = content.split("**Your stored memories:**")[0].rstrip()
+                self.messages[i] = Message(role="system", content=content + memories)
+                return
+        
+        # No system message found, add one
+        self.messages.insert(0, Message(role="system", content=memories))
 
 
 @dataclass
@@ -100,6 +136,9 @@ class ChatBot:
         if conversation is None:
             conversation = self.create_conversation()
 
+        # Inject current memories into system prompt
+        conversation.update_system_with_memories()
+
         # Add user message
         conversation.add_user_message(message)
 
@@ -120,10 +159,15 @@ class ChatBot:
         if not self._client:
             raise RuntimeError("ChatBot not initialized. Use 'async with' context.")
 
+        # Include memories in system prompt
+        memories = _load_memories()
+        system_content = self.settings.system_prompt + memories
+
         messages = [
-            Message(role="system", content=self.settings.system_prompt),
+            Message(role="system", content=system_content),
             Message(role="user", content=message),
         ]
 
         response = await self._client.chat(messages)
         return response.content or ""
+
