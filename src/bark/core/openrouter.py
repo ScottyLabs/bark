@@ -122,7 +122,9 @@ class OpenRouterClient:
             # Execute each tool call
             for tool_call in message["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
-                tool_args = json.loads(tool_call["function"]["arguments"])
+                # Handle empty/missing arguments (e.g., refresh_context with no params)
+                args_str = tool_call["function"].get("arguments", "{}") or "{}"
+                tool_args = json.loads(args_str)
 
                 tool = self.registry.get(tool_name)
                 if tool:
