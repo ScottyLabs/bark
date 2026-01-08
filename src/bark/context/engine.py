@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 from bark.context.chroma import ChromaClient, Document, SearchResult
 from bark.context.embeddings import EmbeddingGenerator
 from bark.context.summarizer import Summarizer
+from bark.context.summarizer import Summarizer
 from bark.context.notion_loader import NotionLoader
+from bark.context.drive_loader import DriveLoader
 from bark.context.wiki_loader import WikiLoader
 from bark.core.config import Settings, get_settings
 
@@ -22,7 +24,9 @@ class ContextEngine:
     _embedder: EmbeddingGenerator | None = None
     _summarizer: Summarizer | None = None
     _loader: WikiLoader | None = None
+    _loader: WikiLoader | None = None
     _notion_loader: NotionLoader | None = None
+    _drive_loader: DriveLoader | None = None
 
     def _get_chroma(self) -> ChromaClient:
         """Get or create ChromaDB client."""
@@ -56,6 +60,21 @@ class ContextEngine:
         if self._notion_loader is None and self.settings.notion_api_key:
             self._notion_loader = NotionLoader(api_key=self.settings.notion_api_key)
         return self._notion_loader
+
+    def _get_drive_loader(self) -> DriveLoader | None:
+        """Get or create Drive loader if configured."""
+        if self._drive_loader is None and (
+            self.settings.google_drive_credentials_file 
+            or self.settings.google_drive_credentials_json 
+            or self.settings.google_drive_token_json
+        ):
+            self._drive_loader = DriveLoader(
+                credentials_file=self.settings.google_drive_credentials_file,
+                credentials_json=self.settings.google_drive_credentials_json,
+                token_json=self.settings.google_drive_token_json,
+                folder_id=self.settings.google_drive_folder_id,
+            )
+        return self._drive_loader
 
     async def refresh(self) -> str:
         """Refresh the wiki context incrementally.
@@ -245,6 +264,99 @@ class ContextEngine:
         except Exception as e:
             logger.error(f"Failed to refresh Notion context: {e}")
             return f"Failed to refresh Notion context: {str(e)}"
+
+    async def refresh_drive(self) -> str:
+        """Refresh the Google Drive context incrementally.
+
+        Returns:
+            Status message
+        """
+        drive_loader = self._get_drive_loader()
+        if drive_loader is None:
+            return "Google Drive integration not configured. Check google_drive_credentials_file or GOOGLE_DRIVE_CREDENTIALS_JSON/TOKEN_JSON settings."
+
+        try:
+            chroma = self._get_chroma()
+            embedder = self._get_embedder()
+            summarizer = self._get_summarizer()
+
+            # 1. Fetch metadata for all current files from Drive
+            logger.info("Fetching Drive file metadata...")
+            current_metadata = drive_loader.fetch_file_metadata()
+            current_file_ids = set(current_metadata.keys())
+
+            # 2. Get stored metadata from Chroma
+            stored_metadata = chroma.get_stored_drive_metadata()
+            stored_file_ids = set(stored_metadata.keys())
+
+            # 3. Determine changes
+            new_files = current_file_ids - stored_file_ids
+            deleted_files = stored_file_ids - current_file_ids
+            
+            # For files in both, check if timestamp changed
+            # Drive timestamps are ISO strings
+            updated_files = {
+                fid for fid in (current_file_ids & stored_file_ids)
+                if current_metadata[fid] > stored_metadata[fid]
+            }
+
+            files_to_process = list(new_files | updated_files)
+            files_to_delete = list(deleted_files | updated_files)
+
+            stats = {
+                "new": len(new_files),
+                "updated": len(updated_files),
+                "deleted": len(deleted_files),
+                "unchanged": len(current_file_ids) - len(new_files) - len(updated_files)
+            }
+            logger.info(f"Incremental Drive refresh stats: {stats}")
+
+            if not files_to_process and not files_to_delete:
+                return "Google Drive context is up to date."
+
+            # 4. Process deletions
+            if files_to_delete:
+                logger.info(f"Deleting chunks for {len(files_to_delete)} Drive files")
+                chroma.delete_drive_files(files_to_delete)
+
+            # 5. Process new/updated files
+            if files_to_process:
+                logger.info(f"Processing {len(files_to_process)} new/updated Drive files")
+                chunks = drive_loader.load(file_ids=files_to_process)
+                
+                if chunks:
+                    # Summarize chunks
+                    logger.info(f"Summarizing {len(chunks)} chunks")
+                    original_texts = [chunk.content for chunk in chunks]
+                    summaries = await summarizer.summarize_batch(original_texts)
+
+                    # Generate embeddings
+                    logger.info(f"Generating embeddings for {len(summaries)} summaries")
+                    embeddings = await embedder.embed_batch(summaries)
+
+                    # Create documents
+                    documents = [
+                        Document(
+                            id=chunk.id,
+                            content=chunk.content,
+                            metadata=chunk.metadata,
+                            embedding=embedding,
+                        )
+                        for chunk, embedding in zip(chunks, embeddings)
+                    ]
+
+                    # Add to Chroma
+                    chroma.add_documents(documents)
+
+            return (
+                f"Refreshed Google Drive context: "
+                f"{stats['new']} new, {stats['updated']} updated, "
+                f"{stats['deleted']} deleted, {stats['unchanged']} unchanged."
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to refresh Google Drive context: {e}")
+            return f"Failed to refresh Google Drive context: {str(e)}"
 
     async def search(self, query: str, k: int = 5) -> list[SearchResult]:
         """Search for relevant wiki content.

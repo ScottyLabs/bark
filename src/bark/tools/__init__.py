@@ -33,6 +33,20 @@ async def refresh_notion_context() -> str:
 
 
 @tool(
+    name="refresh_drive_context",
+    description="Refresh the Google Drive context. Use this when Drive files may have been updated or added.",
+    parameters={
+        "type": "object",
+        "properties": {},
+    },
+)
+async def refresh_drive_context() -> str:
+    """Refresh the Google Drive context by re-ingesting all files."""
+    engine = get_context_engine()
+    return await engine.refresh_drive()
+
+
+@tool(
     name="search_wiki",
     description="Search the ScottyLabs wiki for information about processes, projects, policies, or anything ScottyLabs-related. Returns relevant sections from the wiki.",
     parameters={

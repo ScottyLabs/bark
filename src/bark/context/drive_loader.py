@@ -1,0 +1,365 @@
+"""Google Drive loader for fetching content."""
+
+import io
+import logging
+import os
+import hashlib
+from dataclasses import dataclass, field
+from typing import Any
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+from google.oauth2 import service_account
+
+logger = logging.getLogger(__name__)
+
+# If modifying these scopes, delete the file token.json.
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+
+@dataclass
+class DriveChunk:
+    """A chunk of Drive content."""
+
+    id: str
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+import json
+
+# ... imports ...
+
+
+class DriveLoader:
+    """Loads and parses content from Google Drive."""
+
+    def __init__(
+        self,
+        credentials_file: str | None = "credentials.json",
+        credentials_json: str | None = None,
+        token_json: str | None = None,
+        folder_id: str | None = None,
+        chunk_size: int = 500,
+        token_file: str = "token.json",
+    ) -> None:
+        """Initialize the Drive loader.
+
+        Args:
+            credentials_file: Path to credentials.json
+            credentials_json: Content of credentials.json (optional override)
+            token_json: Content of token.json (optional override)
+            folder_id: Optional folder ID to scope search
+            chunk_size: Target size for content chunks (in words)
+            token_file: Path to store user access tokens
+        """
+        self.credentials_file = credentials_file
+        self.credentials_json = credentials_json
+        self.token_json = token_json
+        self.folder_id = folder_id
+        self.chunk_size = chunk_size
+        self.token_file = token_file
+        self._service: Any | None = None
+
+    def _get_service(self) -> Any:
+        """Get or create the Drive service."""
+        if self._service:
+            return self._service
+
+        creds = None
+        
+        # 1. Try Service Account from JSON string
+        if self.credentials_json:
+            try:
+                info = json.loads(self.credentials_json)
+                creds = service_account.Credentials.from_service_account_info(
+                    info, scopes=SCOPES
+                )
+                logger.info("Loaded Service Account credentials from JSON string")
+            except Exception as e:
+                logger.warning(f"Failed to load Service Account from JSON string: {e}")
+
+        # 2. Try Service Account from File
+        if not creds and self.credentials_file and os.path.exists(self.credentials_file):
+            try:
+                # Try loading as service account first
+                creds = service_account.Credentials.from_service_account_file(
+                    self.credentials_file, scopes=SCOPES
+                )
+                logger.info("Loaded Service Account credentials from file")
+            except ValueError:
+                # Fallback to user credentials flow
+                pass
+
+        if not creds:
+             # 3. Try User Token from JSON string
+            if self.token_json:
+                try:
+                    info = json.loads(self.token_json)
+                    creds = Credentials.from_authorized_user_info(info, SCOPES)
+                    logger.info("Loaded User credentials from JSON string")
+                except Exception as e:
+                    logger.warning(f"Failed to load User credentials from JSON string: {e}")
+
+            # 4. Try User Token from File
+            if (not creds or not creds.valid) and os.path.exists(self.token_file):
+                creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+            
+            # If there are no (valid) credentials available, let the user log in.
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                else:
+                    if not self.credentials_file or not os.path.exists(self.credentials_file):
+                         raise FileNotFoundError(f"Credentials file not found: {self.credentials_file}")
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.credentials_file, SCOPES
+                    )
+                    creds = flow.run_local_server(port=0)
+                
+                # Save the credentials for the next run (only if file path is set)
+                if self.token_file:
+                    with open(self.token_file, "w") as token:
+                        token.write(creds.to_json())
+                logger.info("Loaded User credentials")
+
+        self._service = build("drive", "v3", credentials=creds)
+        return self._service
+
+    def load(self, file_ids: list[str] | None = None) -> list[DriveChunk]:
+        """Fetch and parse Drive files.
+        
+        Args:
+            file_ids: Optional list of file IDs to fetch. If None, fetches all files in folder.
+            
+        Returns:
+            List of Drive chunks
+        """
+        chunks: list[DriveChunk] = []
+        service = self._get_service()
+
+        try:
+            files_to_process = []
+            if file_ids:
+                for file_id in file_ids:
+                    try:
+                        file = service.files().get(
+                            fileId=file_id, 
+                            fields="id, name, mimeType, modifiedTime, webViewLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                        files_to_process.append(file)
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve file {file_id}: {e}")
+            else:
+                files_to_process = self._list_files(service)
+
+            logger.warning(f"Processing {len(files_to_process)} Drive files")
+
+            for i, file in enumerate(files_to_process, 1):
+                if i % 5 == 0:
+                    logger.warning(f"Processing file {i}/{len(files_to_process)}: {file.get('name', 'Untitled')}")
+                
+                file_chunks = self._process_file(service, file)
+                chunks.extend(file_chunks)
+
+            return chunks
+
+        except Exception as e:
+            logger.error(f"Failed to load Drive content: {e}")
+            raise
+
+    def fetch_file_metadata(self) -> dict[str, str]:
+        """Fetch metadata for all accessible files.
+
+        Returns:
+            Dictionary mapping file ID to modifiedTime
+        """
+        service = self._get_service()
+        metadata = {}
+
+        try:
+            files = self._list_files(service)
+            for file in files:
+                metadata[file["id"]] = file.get("modifiedTime", "")
+        except Exception as e:
+            logger.error(f"Failed to fetch Drive metadata: {e}")
+            raise
+
+        return metadata
+
+    def _list_files(self, service: Any) -> list[dict[str, Any]]:
+        """List files in the configured scope (recursively if folder_id is set)."""
+        all_files = []
+        
+        # If no folder_id, search everything (flat search is effectively recursive for the user's view)
+        if not self.folder_id:
+            return self._perform_search(service, parent_id=None)
+
+        # If folder_id is set, crawl recursively
+        logger.warning(f"Starting recursive crawl of folder: {self.folder_id}")
+        folders_to_process = [self.folder_id]
+        processed_folders = set()
+
+        while folders_to_process:
+            current_folder_id = folders_to_process.pop(0)
+            
+            if current_folder_id in processed_folders:
+                continue
+            processed_folders.add(current_folder_id)
+            
+            if len(processed_folders) % 5 == 0:
+                 logger.warning(f"Crawled {len(processed_folders)} folders...")
+
+            # Fetch items in this folder (both content and subfolders)
+            items = self._perform_search(service, parent_id=current_folder_id, include_folders=True)
+            
+            for item in items:
+                if item.get("mimeType") == "application/vnd.google-apps.folder":
+                    folders_to_process.append(item["id"])
+                else:
+                    all_files.append(item)
+                    
+        return all_files
+
+    def _perform_search(self, service: Any, parent_id: str | None, include_folders: bool = False) -> list[dict[str, Any]]:
+        """Helper to safely search a specific scope."""
+        files = []
+        page_token = None
+        
+        query_parts = ["trashed = false"]
+        
+        if parent_id:
+            query_parts.append(f"'{parent_id}' in parents")
+        
+        mime_types = [
+            "application/vnd.google-apps.document",
+            "text/plain",
+            "text/markdown"
+        ]
+        if include_folders:
+            mime_types.append("application/vnd.google-apps.folder")
+            
+        mime_query = " or ".join(f"mimeType = '{mt}'" for mt in mime_types)
+        query_parts.append(f"({mime_query})")
+        
+        query = " and ".join(query_parts)
+
+        while True:
+            try:
+                response = service.files().list(
+                    q=query,
+                    spaces="drive",
+                    fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+                
+                files.extend(response.get("files", []))
+                page_token = response.get("nextPageToken", None)
+                if page_token is None:
+                    break
+            except Exception as e:
+                logger.warning(f"Error searching in {parent_id}: {e}")
+                break
+                
+        return files
+
+    def _process_file(self, service: Any, file: dict[str, Any]) -> list[DriveChunk]:
+        """Process a single file into chunks."""
+        chunks = []
+        file_id = file["id"]
+        name = file.get("name", "Untitled")
+        mime_type = file.get("mimeType", "")
+        
+        content = ""
+        
+        try:
+            if mime_type == "application/vnd.google-apps.document":
+                # Export Google Doc as text
+                content = self._export_gdoc(service, file_id)
+            elif mime_type in ["text/plain", "text/markdown"]:
+                # Download text file
+                content = self._download_file(service, file_id)
+            
+            if not content.strip():
+                return []
+
+            text_chunks = self._split_into_chunks(content)
+            
+            for i, chunk_text in enumerate(text_chunks):
+                chunk_id = self._generate_chunk_id(file_id, i)
+                chunks.append(
+                    DriveChunk(
+                        id=chunk_id,
+                        content=chunk_text,
+                        metadata={
+                            "page": name,
+                            "source": f"drive/{file_id}",
+                            "url": file.get("webViewLink", ""),
+                            "source_type": "drive",
+                            "last_edited_time": file.get("modifiedTime", ""),
+                            "mime_type": mime_type,
+                        },
+                    )
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to process file {name} ({file_id}): {e}")
+            
+        return chunks
+
+    def _export_gdoc(self, service: Any, file_id: str) -> str:
+        """Export a Google Doc to plain text."""
+        request = service.files().export_media(
+            fileId=file_id, mimeType="text/plain"
+        )
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+            
+        return fh.getvalue().decode("utf-8")
+
+    def _download_file(self, service: Any, file_id: str) -> str:
+        """Download a binary file (text)."""
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+            
+        return fh.getvalue().decode("utf-8")
+
+    def _split_into_chunks(self, text: str) -> list[str]:
+        """Split text into chunks of approximately chunk_size words."""
+        words = text.split()
+
+        if len(words) <= self.chunk_size:
+            return [text]
+
+        chunks: list[str] = []
+        current_chunk: list[str] = []
+
+        for word in words:
+            current_chunk.append(word)
+            if len(current_chunk) >= self.chunk_size:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = []
+
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+
+        return chunks
+
+    def _generate_chunk_id(self, file_id: str, index: int) -> str:
+        """Generate a unique ID for a chunk."""
+        raw_id = f"drive:{file_id}:{index}"
+        return hashlib.md5(raw_id.encode()).hexdigest()[:16]

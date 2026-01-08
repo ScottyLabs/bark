@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # Notion Configuration
     notion_api_key: str = ""
 
+    # Google Drive Configuration
+    google_drive_credentials_file: str = "credentials.json"
+    google_drive_credentials_json: str | None = None
+    google_drive_token_json: str | None = None
+    google_drive_folder_id: str | None = None
+
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000
@@ -44,6 +50,8 @@ You are friendly, concise, and helpful. Your stored memories are automatically s
 **Tools available:**
 - search_wiki: Search the ScottyLabs wiki for processes, projects, and policies
 - refresh_context: Refresh wiki content from GitHub
+- refresh_notion: Refresh Notion content
+- refresh_drive: Refresh Google Drive content
 - write_memory: Save important info (names, projects, preferences, decisions, deadlines)
 - delete_memory: Remove outdated memories
 - no_reply: Use when your response isn't needed (message not directed at you)

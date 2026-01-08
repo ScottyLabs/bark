@@ -252,6 +252,56 @@ class ChromaClient:
         except Exception as e:
             logger.warning(f"Failed to delete collection: {e}")
 
+    def get_stored_drive_metadata(self) -> dict[str, str]:
+        """Get stored metadata for all Google Drive files in ChromaDB.
+
+        Returns:
+            Dictionary mapping file ID to last_edited_time
+        """
+        try:
+            collection = self._get_or_create_collection()
+            results = collection.get(
+                where={"source_type": "drive"},
+                include=["metadatas"],
+            )
+
+            metadata_map = {}
+            if results["metadatas"]:
+                for meta in results["metadatas"]:
+                    source = meta.get("source", "")
+                    last_edited = meta.get("last_edited_time", "")
+                    # source is like "drive/{id}"
+                    if source.startswith("drive/") and last_edited:
+                        file_id = source.replace("drive/", "")
+                        metadata_map[file_id] = last_edited
+            
+            return metadata_map
+        except Exception as e:
+            logger.error(f"Failed to fetch stored Drive metadata: {e}")
+            return {}
+
+    def delete_drive_files(self, file_ids: list[str]) -> None:
+        """Delete all chunks associated with specific Drive files.
+
+        Args:
+            file_ids: List of Drive file IDs
+        """
+        if not file_ids:
+            return
+
+        try:
+            collection = self._get_or_create_collection()
+            
+            # source in ["drive/id1", "drive/id2", ...]
+            sources = [f"drive/{file_id}" for file_id in file_ids]
+            
+            collection.delete(
+                where={"source": {"$in": sources}}
+            )
+            logger.info(f"Deleted chunks for {len(file_ids)} Drive files")
+        except Exception as e:
+            logger.error(f"Failed to delete Drive files: {e}")
+
     def get_collection_count(self) -> int:
         """Get the number of documents in the collection."""
         try:

@@ -18,6 +18,10 @@ dependencies = [
     "gitpython>=3.1.0",
     # Notion Integration
     "notion-client>=2.0.0",
+    # Google Drive Integration
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.0.0",
 ]
 
 [project.scripts]
