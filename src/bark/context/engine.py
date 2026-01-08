@@ -58,7 +58,7 @@ class ContextEngine:
         return self._notion_loader
 
     async def refresh(self) -> str:
-        """Refresh the wiki context by re-ingesting all content.
+        """Refresh the wiki context incrementally.
 
         Returns:
             Status message
@@ -68,48 +68,93 @@ class ContextEngine:
             embedder = self._get_embedder()
             loader = self._get_loader()
 
-            # Clear existing collection
-            chroma.delete_collection()
+            # 1. Fetch metadata for all current wiki pages
+            logger.info("Fetching wiki metadata...")
+            current_metadata = loader.fetch_page_metadata()
+            current_paths = set(current_metadata.keys())
 
-            # Load wiki content
-            chunks = loader.load()
+            # 2. Get stored metadata from Chroma
+            stored_metadata = chroma.get_stored_wiki_metadata()
+            stored_paths = set(stored_metadata.keys())
 
-            if not chunks:
-                return "No wiki content found to ingest."
+            # 3. Determine changes
+            new_pages = current_paths - stored_paths
+            deleted_pages = stored_paths - current_paths
+            
+            # For pages in both, check if commit hash changed
+            updated_pages = {
+                path for path in (current_paths & stored_paths)
+                if current_metadata[path] != stored_metadata[path]
+            }
 
-            # Summarize chunks for embedding (cheaper than embedding full content)
-            summarizer = self._get_summarizer()
-            logger.info(f"Summarizing {len(chunks)} chunks for embedding")
-            original_texts = [chunk.content for chunk in chunks]
-            summaries = await summarizer.summarize_batch(original_texts)
+            pages_to_process = list(new_pages | updated_pages)
+            pages_to_delete = list(deleted_pages | updated_pages)
 
-            # Generate embeddings from summaries
-            logger.info(f"Generating embeddings for {len(summaries)} summaries")
-            embeddings = await embedder.embed_batch(summaries)
+            stats = {
+                "new": len(new_pages),
+                "updated": len(updated_pages),
+                "deleted": len(deleted_pages),
+                "unchanged": len(current_paths) - len(new_pages) - len(updated_pages)
+            }
+            logger.info(f"Incremental wiki refresh stats: {stats}")
 
-            # Create documents with embeddings
-            documents = [
-                Document(
-                    id=chunk.id,
-                    content=chunk.content,
-                    metadata=chunk.metadata,
-                    embedding=embedding,
-                )
-                for chunk, embedding in zip(chunks, embeddings)
-            ]
+            if not pages_to_process and not pages_to_delete:
+                return "Wiki context is up to date."
 
-            # Add to ChromaDB
-            chroma.add_documents(documents)
+            # 4. Process deletions
+            if pages_to_delete:
+                logger.info(f"Deleting chunks for {len(pages_to_delete)} wiki pages")
+                chroma.delete_wiki_pages(pages_to_delete)
 
-            count = chroma.get_collection_count()
-            return f"Successfully refreshed wiki context. Ingested {count} chunks from the ScottyLabs wiki."
+            # 5. Process new/updated pages
+            if pages_to_process:
+                logger.info(f"Processing {len(pages_to_process)} new/updated wiki pages")
+                chunks = loader.load(page_paths=pages_to_process)
+                
+                if chunks:
+                    # Update metadata with commit hashes
+                    for chunk in chunks:
+                        # source is like "wiki/path/to/file.md"
+                        relative_path = chunk.metadata["source"].replace("wiki/", "")
+                        if relative_path in current_metadata:
+                            chunk.metadata["commit_hash"] = current_metadata[relative_path]
+
+                    # Summarize
+                    logger.info(f"Summarizing {len(chunks)} chunks")
+                    original_texts = [chunk.content for chunk in chunks]
+                    summarizer = self._get_summarizer()
+                    summaries = await summarizer.summarize_batch(original_texts)
+
+                    # Embed
+                    logger.info(f"Generating embeddings for {len(summaries)} summaries")
+                    embeddings = await embedder.embed_batch(summaries)
+
+                    # Create documents
+                    documents = [
+                        Document(
+                            id=chunk.id,
+                            content=chunk.content,
+                            metadata=chunk.metadata,
+                            embedding=embedding,
+                        )
+                        for chunk, embedding in zip(chunks, embeddings)
+                    ]
+
+                    # Add to Chroma
+                    chroma.add_documents(documents)
+
+            return (
+                f"Refreshed wiki context: "
+                f"{stats['new']} new, {stats['updated']} updated, "
+                f"{stats['deleted']} deleted, {stats['unchanged']} unchanged."
+            )
 
         except Exception as e:
             logger.error(f"Failed to refresh context: {e}")
             return f"Failed to refresh wiki context: {str(e)}"
 
     async def refresh_notion(self) -> str:
-        """Refresh the Notion context by re-ingesting all Notion pages.
+        """Refresh the Notion context incrementally.
 
         Returns:
             Status message
@@ -123,37 +168,79 @@ class ContextEngine:
             embedder = self._get_embedder()
             summarizer = self._get_summarizer()
 
-            # Load Notion content
-            logger.info("Loading content from Notion workspace")
-            chunks = notion_loader.load()
+            # 1. Fetch metadata for all current pages from Notion
+            logger.info("Fetching Notion page metadata...")
+            current_metadata = notion_loader.fetch_page_metadata()
+            current_page_ids = set(current_metadata.keys())
 
-            if not chunks:
-                return "No Notion content found to ingest."
+            # 2. Get stored metadata from Chroma
+            stored_metadata = chroma.get_stored_notion_metadata()
+            stored_page_ids = set(stored_metadata.keys())
 
-            # Summarize chunks for embedding
-            logger.info(f"Summarizing {len(chunks)} Notion chunks for embedding")
-            original_texts = [chunk.content for chunk in chunks]
-            summaries = await summarizer.summarize_batch(original_texts)
+            # 3. Determine changes
+            new_pages = current_page_ids - stored_page_ids
+            deleted_pages = stored_page_ids - current_page_ids
+            
+            # For pages in both, check if timestamp changed
+            # Note: Notion timestamps are ISO 8601 strings, so string comparison works
+            updated_pages = {
+                pid for pid in (current_page_ids & stored_page_ids)
+                if current_metadata[pid] > stored_metadata[pid]
+            }
 
-            # Generate embeddings from summaries
-            logger.info(f"Generating embeddings for {len(summaries)} Notion summaries")
-            embeddings = await embedder.embed_batch(summaries)
+            pages_to_process = list(new_pages | updated_pages)
+            pages_to_delete = list(deleted_pages | updated_pages)
 
-            # Create documents with embeddings
-            documents = [
-                Document(
-                    id=chunk.id,
-                    content=chunk.content,
-                    metadata=chunk.metadata,
-                    embedding=embedding,
-                )
-                for chunk, embedding in zip(chunks, embeddings)
-            ]
+            stats = {
+                "new": len(new_pages),
+                "updated": len(updated_pages),
+                "deleted": len(deleted_pages),
+                "unchanged": len(current_page_ids) - len(new_pages) - len(updated_pages)
+            }
+            logger.info(f"Incremental refresh stats: {stats}")
 
-            # Add to ChromaDB (same collection as wiki)
-            chroma.add_documents(documents)
+            if not pages_to_process and not pages_to_delete:
+                return "Notion context is up to date."
 
-            return f"Successfully refreshed Notion context. Ingested {len(documents)} chunks from Notion workspace."
+            # 4. Process deletions (including outdated versions of updated pages)
+            if pages_to_delete:
+                logger.info(f"Deleting chunks for {len(pages_to_delete)} pages")
+                chroma.delete_notion_pages(pages_to_delete)
+
+            # 5. Process new/updated pages
+            if pages_to_process:
+                logger.info(f"Processing {len(pages_to_process)} new/updated pages")
+                chunks = notion_loader.load(page_ids=pages_to_process)
+                
+                if chunks:
+                    # Summarize chunks
+                    logger.info(f"Summarizing {len(chunks)} chunks")
+                    original_texts = [chunk.content for chunk in chunks]
+                    summaries = await summarizer.summarize_batch(original_texts)
+
+                    # Generate embeddings
+                    logger.info(f"Generating embeddings for {len(summaries)} summaries")
+                    embeddings = await embedder.embed_batch(summaries)
+
+                    # Create documents
+                    documents = [
+                        Document(
+                            id=chunk.id,
+                            content=chunk.content,
+                            metadata=chunk.metadata,
+                            embedding=embedding,
+                        )
+                        for chunk, embedding in zip(chunks, embeddings)
+                    ]
+
+                    # Add to Chroma
+                    chroma.add_documents(documents)
+
+            return (
+                f"Refreshed Notion context: "
+                f"{stats['new']} new, {stats['updated']} updated, "
+                f"{stats['deleted']} deleted, {stats['unchanged']} unchanged."
+            )
 
         except Exception as e:
             logger.error(f"Failed to refresh Notion context: {e}")

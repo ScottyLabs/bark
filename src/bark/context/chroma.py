@@ -139,6 +139,109 @@ class ChromaClient:
 
         return search_results
 
+    def get_stored_notion_metadata(self) -> dict[str, str]:
+        """Get stored metadata for all Notion pages in ChromaDB.
+
+        Returns:
+            Dictionary mapping page ID to last_edited_time
+        """
+        try:
+            collection = self._get_or_create_collection()
+            # Fetch all documents with source_type="notion"
+            # Since we can't easily get "all" without a limit, we'll use a large limit
+            # or iterate if needed. For now, we assume a reasonable limit.
+            results = collection.get(
+                where={"source_type": "notion"},
+                include=["metadatas"],
+            )
+
+            metadata_map = {}
+            if results["metadatas"]:
+                for meta in results["metadatas"]:
+                    source = meta.get("source", "")
+                    last_edited = meta.get("last_edited_time", "")
+                    if source.startswith("notion/") and last_edited:
+                        page_id = source.replace("notion/", "")
+                        metadata_map[page_id] = last_edited
+            
+            return metadata_map
+        except Exception as e:
+            logger.error(f"Failed to fetch stored metadata: {e}")
+            return {}
+
+    def delete_notion_pages(self, page_ids: list[str]) -> None:
+        """Delete all chunks associated with specific Notion pages.
+
+        Args:
+            page_ids: List of Notion page IDs
+        """
+        if not page_ids:
+            return
+
+        try:
+            collection = self._get_or_create_collection()
+            
+            # Construct where clause for multiple pages
+            # source in ["notion/id1", "notion/id2", ...]
+            sources = [f"notion/{page_id}" for page_id in page_ids]
+            
+            collection.delete(
+                where={"source": {"$in": sources}}
+            )
+            logger.info(f"Deleted chunks for {len(page_ids)} Notion pages")
+        except Exception as e:
+            logger.error(f"Failed to delete Notion pages: {e}")
+
+    def get_stored_wiki_metadata(self) -> dict[str, str]:
+        """Get stored metadata for all GitHub wiki pages in ChromaDB.
+
+        Returns:
+            Dictionary mapping relative file path to commit hash
+        """
+        try:
+            collection = self._get_or_create_collection()
+            results = collection.get(
+                where={"source_type": "wiki"},
+                include=["metadatas"],
+            )
+
+            metadata_map = {}
+            if results["metadatas"]:
+                for meta in results["metadatas"]:
+                    source = meta.get("source", "")
+                    commit = meta.get("commit_hash", "")
+                    # source is like "wiki/Home.md"
+                    if source.startswith("wiki/") and commit:
+                        path = source.replace("wiki/", "")
+                        metadata_map[path] = commit
+            
+            return metadata_map
+        except Exception as e:
+            logger.error(f"Failed to fetch stored wiki metadata: {e}")
+            return {}
+
+    def delete_wiki_pages(self, paths: list[str]) -> None:
+        """Delete all chunks associated with specific wiki pages.
+
+        Args:
+            paths: List of relative file paths
+        """
+        if not paths:
+            return
+
+        try:
+            collection = self._get_or_create_collection()
+            
+            # source in ["wiki/path1", "wiki/path2", ...]
+            sources = [f"wiki/{path}" for path in paths]
+            
+            collection.delete(
+                where={"source": {"$in": sources}}
+            )
+            logger.info(f"Deleted chunks for {len(paths)} wiki pages")
+        except Exception as e:
+            logger.error(f"Failed to delete wiki pages: {e}")
+
     def delete_collection(self) -> None:
         """Delete the wiki collection."""
         if not self._client:

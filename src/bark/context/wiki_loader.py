@@ -40,8 +40,11 @@ class WikiLoader:
         self.repo_url = repo_url
         self.chunk_size = chunk_size
 
-    def load(self) -> list[WikiChunk]:
-        """Clone the wiki and parse all markdown files.
+    def load(self, page_paths: list[str] | None = None) -> list[WikiChunk]:
+        """Clone the wiki and parse markdown files.
+
+        Args:
+            page_paths: Optional list of specific file paths (relative to wiki root) to load.
 
         Returns:
             List of wiki chunks
@@ -53,12 +56,23 @@ class WikiLoader:
         try:
             logger.info(f"Cloning wiki from {self.repo_url}")
             git.Repo.clone_from(self.repo_url, temp_dir, depth=1)
-
-            # Find and parse all markdown files
             wiki_path = Path(temp_dir)
-            for md_file in wiki_path.rglob("*.md"):
-                file_chunks = self._parse_markdown_file(md_file)
-                chunks.extend(file_chunks)
+
+            if page_paths:
+                logger.info(f"Processing {len(page_paths)} specific files")
+                files_to_process = [wiki_path / path for path in page_paths]
+            else:
+                logger.info("Processing all markdown files")
+                files_to_process = list(wiki_path.rglob("*.md"))
+
+            # Find and parse files
+            for md_file in files_to_process:
+                if md_file.exists() and md_file.suffix == ".md":
+                    # Get last commit hash for versioning (if available)
+                    # For simplicty in this implementation, we rely on the caller to handle version tracking
+                    # But we will add the commit hash/timestamp to metadata
+                    file_chunks = self._parse_markdown_file(md_file, wiki_path)
+                    chunks.extend(file_chunks)
 
             logger.info(f"Loaded {len(chunks)} chunks from wiki")
 
@@ -71,11 +85,58 @@ class WikiLoader:
 
         return chunks
 
-    def _parse_markdown_file(self, file_path: Path) -> list[WikiChunk]:
+    def fetch_page_metadata(self) -> dict[str, str]:
+        """Fetch metadata for all wiki pages (path -> commit_hash).
+
+        Returns:
+            Dictionary mapping relative file path to last commit hash
+        """
+        temp_dir = tempfile.mkdtemp(prefix="bark_wiki_meta_")
+        metadata = {}
+
+        try:
+            # We need full history or at least enough to get log, but depth 1 
+            # is usually enough for the latest commit hash of the HEAD
+            repo = git.Repo.clone_from(self.repo_url, temp_dir, depth=1)
+            wiki_path = Path(temp_dir)
+            
+            # For each markdown file, get the blob hash or commit hash
+            # A simple approximation for "version" is the blob hash (content hash) of the file
+            # This is robust: if file content changes, blob hash changes.
+            
+            head_commit = repo.head.commit
+            
+            for md_file in wiki_path.rglob("*.md"):
+                rel_path = md_file.relative_to(wiki_path)
+                str_path = str(rel_path)
+                
+                try:
+                    # Get blob hash for the file in the current HEAD
+                    # This represents the exact content version
+                    blob = head_commit.tree / str_path
+                    metadata[str_path] = blob.hexsha
+                except KeyError:
+                    # File might not be in the tree if it's new/untracked? 
+                    # But we just cloned so it should be there.
+                    # Fallback to file hash
+                    with open(md_file, "rb") as f:
+                        file_hash = hashlib.sha1(f.read()).hexdigest()
+                    metadata[str_path] = file_hash
+
+        except Exception as e:
+            logger.error(f"Failed to fetch wiki metadata: {e}")
+            raise
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        return metadata
+
+    def _parse_markdown_file(self, file_path: Path, root_path: Path) -> list[WikiChunk]:
         """Parse a markdown file into chunks.
 
         Args:
             file_path: Path to the markdown file
+            root_path: Root path of the wiki (to calculate relative path)
 
         Returns:
             List of chunks from this file
@@ -107,7 +168,10 @@ class WikiLoader:
                         metadata={
                             "page": page_name,
                             "heading": heading,
-                            "source": f"wiki/{file_path.name}",
+                            "source": f"wiki/{file_path.relative_to(root_path)}",
+                            "source_type": "wiki",
+                            # We can't easily get the blob hash here without re-calculating or passing it down
+                            # But we'll rely on the engine to manage the "last_edited_time" equivalent
                         },
                     )
                 )

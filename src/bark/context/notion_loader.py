@@ -44,8 +44,11 @@ class NotionLoader:
             self._client = Client(auth=self.api_key)
         return self._client
 
-    def load(self) -> list[NotionChunk]:
-        """Fetch all accessible pages from Notion and parse them.
+    def load(self, page_ids: list[str] | None = None) -> list[NotionChunk]:
+        """Fetch and parse Notion pages.
+
+        Args:
+            page_ids: Optional list of page IDs to fetch. If None, fetches all pages.
 
         Returns:
             List of Notion chunks
@@ -55,12 +58,23 @@ class NotionLoader:
         try:
             client = self._get_client()
 
-            # Search for all pages accessible to the integration
-            logger.info("Fetching pages from Notion workspace")
-            all_pages = self._fetch_all_pages(client)
-            logger.info(f"Found {len(all_pages)} pages in Notion")
+            if page_ids:
+                logger.info(f"Fetching {len(page_ids)} specific pages from Notion")
+                pages = []
+                for page_id in page_ids:
+                    try:
+                        page = client.pages.retrieve(page_id=page_id)
+                        pages.append(page)
+                    except APIResponseError as e:
+                        logger.warning(f"Failed to retrieve page {page_id}: {e}")
+            else:
+                # Search for all pages accessible to the integration
+                logger.info("Fetching all pages from Notion workspace")
+                pages = self._fetch_all_pages(client)
+            
+            logger.info(f"Processing {len(pages)} pages")
 
-            for page in all_pages:
+            for page in pages:
                 page_chunks = self._parse_page(client, page)
                 chunks.extend(page_chunks)
 
@@ -74,6 +88,27 @@ class NotionLoader:
             raise
 
         return chunks
+
+    def fetch_page_metadata(self) -> dict[str, str]:
+        """Fetch metadata for all accessible pages.
+
+        Returns:
+            Dictionary mapping page ID to last_edited_time
+        """
+        client = self._get_client()
+        metadata = {}
+
+        try:
+            pages = self._fetch_all_pages(client)
+            for page in pages:
+                page_id = page["id"]
+                last_edited = page.get("last_edited_time", "")
+                metadata[page_id] = last_edited
+        except Exception as e:
+            logger.error(f"Failed to fetch page metadata: {e}")
+            raise
+
+        return metadata
 
     def _fetch_all_pages(self, client: Client) -> list[dict[str, Any]]:
         """Fetch all pages accessible to the integration.
@@ -146,6 +181,7 @@ class NotionLoader:
                         "source": f"notion/{page_id}",
                         "url": page_url,
                         "source_type": "notion",
+                        "last_edited_time": page.get("last_edited_time", ""),
                     },
                 )
             )
