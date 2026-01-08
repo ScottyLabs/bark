@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
 
+    # Notion Configuration
+    notion_api_key: str = ""
+
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000

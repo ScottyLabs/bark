@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from bark.context.chroma import ChromaClient, Document, SearchResult
 from bark.context.embeddings import EmbeddingGenerator
 from bark.context.summarizer import Summarizer
+from bark.context.notion_loader import NotionLoader
 from bark.context.wiki_loader import WikiLoader
 from bark.core.config import Settings, get_settings
 
@@ -21,6 +22,7 @@ class ContextEngine:
     _embedder: EmbeddingGenerator | None = None
     _summarizer: Summarizer | None = None
     _loader: WikiLoader | None = None
+    _notion_loader: NotionLoader | None = None
 
     def _get_chroma(self) -> ChromaClient:
         """Get or create ChromaDB client."""
@@ -48,6 +50,12 @@ class ContextEngine:
         if self._loader is None:
             self._loader = WikiLoader(repo_url=self.settings.wiki_repo_url)
         return self._loader
+
+    def _get_notion_loader(self) -> NotionLoader | None:
+        """Get or create Notion loader if configured."""
+        if self._notion_loader is None and self.settings.notion_api_key:
+            self._notion_loader = NotionLoader(api_key=self.settings.notion_api_key)
+        return self._notion_loader
 
     async def refresh(self) -> str:
         """Refresh the wiki context by re-ingesting all content.
@@ -99,6 +107,57 @@ class ContextEngine:
         except Exception as e:
             logger.error(f"Failed to refresh context: {e}")
             return f"Failed to refresh wiki context: {str(e)}"
+
+    async def refresh_notion(self) -> str:
+        """Refresh the Notion context by re-ingesting all Notion pages.
+
+        Returns:
+            Status message
+        """
+        notion_loader = self._get_notion_loader()
+        if notion_loader is None:
+            return "Notion integration not configured. Set NOTION_API_KEY in your environment."
+
+        try:
+            chroma = self._get_chroma()
+            embedder = self._get_embedder()
+            summarizer = self._get_summarizer()
+
+            # Load Notion content
+            logger.info("Loading content from Notion workspace")
+            chunks = notion_loader.load()
+
+            if not chunks:
+                return "No Notion content found to ingest."
+
+            # Summarize chunks for embedding
+            logger.info(f"Summarizing {len(chunks)} Notion chunks for embedding")
+            original_texts = [chunk.content for chunk in chunks]
+            summaries = await summarizer.summarize_batch(original_texts)
+
+            # Generate embeddings from summaries
+            logger.info(f"Generating embeddings for {len(summaries)} Notion summaries")
+            embeddings = await embedder.embed_batch(summaries)
+
+            # Create documents with embeddings
+            documents = [
+                Document(
+                    id=chunk.id,
+                    content=chunk.content,
+                    metadata=chunk.metadata,
+                    embedding=embedding,
+                )
+                for chunk, embedding in zip(chunks, embeddings)
+            ]
+
+            # Add to ChromaDB (same collection as wiki)
+            chroma.add_documents(documents)
+
+            return f"Successfully refreshed Notion context. Ingested {len(documents)} chunks from Notion workspace."
+
+        except Exception as e:
+            logger.error(f"Failed to refresh Notion context: {e}")
+            return f"Failed to refresh Notion context: {str(e)}"
 
     async def search(self, query: str, k: int = 5) -> list[SearchResult]:
         """Search for relevant wiki content.

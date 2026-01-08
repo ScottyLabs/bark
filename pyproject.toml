@@ -16,6 +16,8 @@ dependencies = [
     # Context Engine
     "chromadb>=0.4.0",
     "gitpython>=3.1.0",
+    # Notion Integration
+    "notion-client>=2.0.0",
 ]
 
 [project.scripts]

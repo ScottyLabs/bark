@@ -19,6 +19,20 @@ async def refresh_context() -> str:
 
 
 @tool(
+    name="refresh_notion_context",
+    description="Refresh the Notion context. Use this when Notion pages may have been updated or added.",
+    parameters={
+        "type": "object",
+        "properties": {},
+    },
+)
+async def refresh_notion_context() -> str:
+    """Refresh the Notion context by re-ingesting all pages."""
+    engine = get_context_engine()
+    return await engine.refresh_notion()
+
+
+@tool(
     name="search_wiki",
     description="Search the ScottyLabs wiki for information about processes, projects, policies, or anything ScottyLabs-related. Returns relevant sections from the wiki.",
     parameters={
