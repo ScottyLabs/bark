@@ -13,6 +13,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
+import openpyxl
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,8 @@ class DriveLoader:
         
         mime_types = [
             "application/vnd.google-apps.document",
+            "application/vnd.google-apps.spreadsheet",
+            "application/vnd.google-apps.presentation",
             "text/plain",
             "text/markdown"
         ]
@@ -283,6 +286,12 @@ class DriveLoader:
             if mime_type == "application/vnd.google-apps.document":
                 # Export Google Doc as text
                 content = self._export_gdoc(service, file_id)
+            elif mime_type == "application/vnd.google-apps.spreadsheet":
+                # Export Google Sheet as CSV
+                content = self._export_gsheet(service, file_id)
+            elif mime_type == "application/vnd.google-apps.presentation":
+                # Export Google Slides as text
+                content = self._export_gslide(service, file_id)
             elif mime_type in ["text/plain", "text/markdown"]:
                 # Download text file
                 content = self._download_file(service, file_id)
@@ -316,6 +325,50 @@ class DriveLoader:
 
     def _export_gdoc(self, service: Any, file_id: str) -> str:
         """Export a Google Doc to plain text."""
+        request = service.files().export_media(
+            fileId=file_id, mimeType="text/plain"
+        )
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+            
+        return fh.getvalue().decode("utf-8")
+
+    def _export_gsheet(self, service: Any, file_id: str) -> str:
+        """Export a Google Sheet to text (parsing all sheets)."""
+        # Export as XLSX
+        request = service.files().export_media(
+            fileId=file_id, 
+            mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+        
+        # Parse with openpyxl
+        fh.seek(0)
+        wb = openpyxl.load_workbook(fh, read_only=True, data_only=True)
+        
+        output = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            output.append(f"--- Sheet: {sheet_name} ---")
+            
+            for row in ws.iter_rows(values_only=True):
+                # Filter None values and convert to string
+                row_text = [str(cell) for cell in row if cell is not None]
+                if row_text:
+                    output.append(" | ".join(row_text))
+            output.append("\n")
+            
+        return "\n".join(output)
+
+    def _export_gslide(self, service: Any, file_id: str) -> str:
+        """Export a Google Slide to plain text."""
         request = service.files().export_media(
             fileId=file_id, mimeType="text/plain"
         )

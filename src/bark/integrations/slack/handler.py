@@ -23,6 +23,8 @@ SLACK_SYSTEM_ADDENDUM = """You are communicating through Slack. Use Slack's mrkd
 - Blockquotes: > text
 - Bullet lists: - item or • item
 
+Each message you receive is prefixed with "[From: username]" so you know who is speaking. You can address users by name when appropriate.
+
 Keep responses concise. Do not use standard markdown syntax.
 
 IMPORTANT: When you want to separate your response into multiple distinct messages, use double newlines (blank lines) between sections. Each section separated by blank lines will be sent as a separate Slack message."""
@@ -38,6 +40,7 @@ class SlackEventHandler:
     _conversations: dict[str, Conversation] = field(default_factory=dict)
     _processed_events: set[str] = field(default_factory=set)
     _bot_threads: set[tuple[str, str]] = field(default_factory=set)
+    _user_names: dict[str, str] = field(default_factory=dict)  # Cache user ID -> display name
 
     async def __aenter__(self) -> "SlackEventHandler":
         """Enter async context."""
@@ -50,6 +53,41 @@ class SlackEventHandler:
         """Exit async context."""
         if self._chatbot:
             await self._chatbot.__aexit__(*args)
+
+    async def _get_user_display_name(self, user_id: str) -> str:
+        """Resolve a Slack user ID to their display name.
+        
+        Args:
+            user_id: The Slack user ID (e.g., U123456)
+            
+        Returns:
+            The user's display name, or the user ID if lookup fails
+        """
+        if not user_id:
+            return "Unknown"
+        
+        # Check cache first
+        if user_id in self._user_names:
+            return self._user_names[user_id]
+        
+        if not self._client:
+            return user_id
+        
+        try:
+            result = await self._client.users_info(user=user_id)
+            user = result.get("user", {})
+            # Prefer display_name, fall back to real_name, then name
+            display_name = (
+                user.get("profile", {}).get("display_name")
+                or user.get("real_name")
+                or user.get("name")
+                or user_id
+            )
+            self._user_names[user_id] = display_name
+            return display_name
+        except Exception as e:
+            logger.warning(f"Failed to resolve user {user_id}: {e}")
+            return user_id
 
     def _get_conversation_key(self, channel: str, thread_ts: str | None) -> str:
         """Get a unique key for a conversation thread."""
@@ -135,7 +173,7 @@ class SlackEventHandler:
 
         # Process in background to respond quickly to Slack
         asyncio.create_task(
-            self._process_and_respond(text, conversation, channel, thread_ts or ts)
+            self._process_and_respond(text, user, conversation, channel, thread_ts or ts)
         )
 
     async def _handle_message(self, event: dict[str, Any]) -> None:
@@ -159,7 +197,7 @@ class SlackEventHandler:
             logger.info(f"Handling DM from {user}: {text}")
             conversation = self._get_or_create_conversation(channel, thread_ts)
             asyncio.create_task(
-                self._process_and_respond(text, conversation, channel, thread_ts or ts)
+                self._process_and_respond(text, user, conversation, channel, thread_ts or ts)
             )
             return
 
@@ -168,12 +206,13 @@ class SlackEventHandler:
             logger.info(f"Handling thread reply from {user} in {channel}: {text}")
             conversation = self._get_or_create_conversation(channel, thread_ts)
             asyncio.create_task(
-                self._process_and_respond(text, conversation, channel, thread_ts)
+                self._process_and_respond(text, user, conversation, channel, thread_ts)
             )
 
     async def _process_and_respond(
         self,
         text: str,
+        user_id: str,
         conversation: Conversation,
         channel: str,
         thread_ts: str,
@@ -183,9 +222,15 @@ class SlackEventHandler:
             logger.error("Handler not properly initialized")
             return
 
+        # Resolve user ID to display name
+        user_name = await self._get_user_display_name(user_id)
+        
+        # Prefix message with user identity so the bot knows who is speaking
+        message_with_identity = f"[From: {user_name}] {text}"
+
         try:
             # Get response from chatbot
-            response = await self._chatbot.chat(text, conversation)
+            response = await self._chatbot.chat(message_with_identity, conversation)
 
             # Check if bot decided not to reply
             if response.strip() == "__NO_REPLY__":
