@@ -81,25 +81,36 @@ class ChromaClient:
             return
 
         collection = self._get_or_create_collection()
+        
+        # ChromaDB has a max batch size of ~5461, use 5000 to be safe
+        batch_size = 5000
+        total_added = 0
+        
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i:i + batch_size]
+            
+            ids = [doc.id for doc in batch]
+            contents = [doc.content for doc in batch]
+            metadatas = [doc.metadata for doc in batch]
+            embeddings = [doc.embedding for doc in batch if doc.embedding]
 
-        ids = [doc.id for doc in documents]
-        contents = [doc.content for doc in documents]
-        metadatas = [doc.metadata for doc in documents]
-        embeddings = [doc.embedding for doc in documents if doc.embedding]
-
-        if embeddings and len(embeddings) == len(documents):
-            collection.add(
-                ids=ids,
-                documents=contents,
-                metadatas=metadatas,
-                embeddings=embeddings,
-            )
-        else:
-            collection.add(
-                ids=ids,
-                documents=contents,
-                metadatas=metadatas,
-            )
+            if embeddings and len(embeddings) == len(batch):
+                collection.add(
+                    ids=ids,
+                    documents=contents,
+                    metadatas=metadatas,
+                    embeddings=embeddings,
+                )
+            else:
+                collection.add(
+                    ids=ids,
+                    documents=contents,
+                    metadatas=metadatas,
+                )
+            
+            total_added += len(batch)
+            if len(documents) > batch_size:
+                logger.info(f"Added batch {i // batch_size + 1}: {total_added}/{len(documents)} documents")
 
         logger.info(f"Added {len(documents)} documents to collection")
 
