@@ -46,6 +46,7 @@ class DriveLoader:
         credentials_json: str | None = None,
         token_json: str | None = None,
         folder_id: str | None = None,
+        exclude_folder_ids: list[str] | None = None,
         chunk_size: int = 500,
         token_file: str = "token.json",
     ) -> None:
@@ -56,6 +57,7 @@ class DriveLoader:
             credentials_json: Content of credentials.json (optional override)
             token_json: Content of token.json (optional override)
             folder_id: Optional folder ID to scope search
+            exclude_folder_ids: Optional list of folder IDs to exclude from indexing
             chunk_size: Target size for content chunks (in words)
             token_file: Path to store user access tokens
         """
@@ -63,6 +65,7 @@ class DriveLoader:
         self.credentials_json = credentials_json
         self.token_json = token_json
         self.folder_id = folder_id
+        self.exclude_folder_ids = set(exclude_folder_ids or [])
         self.chunk_size = chunk_size
         self.token_file = token_file
         self._service: Any | None = None
@@ -213,6 +216,12 @@ class DriveLoader:
             
             if current_folder_id in processed_folders:
                 continue
+            
+            # Skip excluded folders (check here too in case it's in the initial queue)
+            if current_folder_id in self.exclude_folder_ids:
+                logger.warning(f"Skipping excluded folder: {current_folder_id}")
+                continue
+                
             processed_folders.add(current_folder_id)
             
             if len(processed_folders) % 5 == 0:
@@ -223,7 +232,11 @@ class DriveLoader:
             
             for item in items:
                 if item.get("mimeType") == "application/vnd.google-apps.folder":
-                    folders_to_process.append(item["id"])
+                    # Skip excluded folders
+                    if item["id"] not in self.exclude_folder_ids:
+                        folders_to_process.append(item["id"])
+                    else:
+                        logger.warning(f"Skipping excluded folder: {item.get('name', item['id'])}")
                 else:
                     all_files.append(item)
                     
@@ -282,6 +295,11 @@ class DriveLoader:
         file_id = file["id"]
         name = file.get("name", "Untitled")
         mime_type = file.get("mimeType", "")
+        
+        # Skip files with "resume" in the title
+        if "resume" in name.lower():
+            logger.warning(f"Skipping file with 'resume' in title: {name}")
+            return []
         
         content = ""
         

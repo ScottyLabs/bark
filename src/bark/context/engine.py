@@ -68,11 +68,18 @@ class ContextEngine:
             or self.settings.google_drive_credentials_json 
             or self.settings.google_drive_token_json
         ):
+            # Parse comma-separated exclude folder IDs
+            exclude_ids = [
+                fid.strip() 
+                for fid in self.settings.google_drive_exclude_folder_ids.split(",") 
+                if fid.strip()
+            ]
             self._drive_loader = DriveLoader(
                 credentials_file=self.settings.google_drive_credentials_file,
                 credentials_json=self.settings.google_drive_credentials_json,
                 token_json=self.settings.google_drive_token_json,
                 folder_id=self.settings.google_drive_folder_id,
+                exclude_folder_ids=exclude_ids,
             )
         return self._drive_loader
 
@@ -229,6 +236,7 @@ class ContextEngine:
             # 5. Process new/updated pages
             if pages_to_process:
                 logger.info(f"Processing {len(pages_to_process)} new/updated pages")
+                
                 chunks = notion_loader.load(page_ids=pages_to_process)
                 
                 if chunks:

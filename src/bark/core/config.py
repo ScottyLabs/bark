@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     google_drive_credentials_json: str | None = None
     google_drive_token_json: str | None = None
     google_drive_folder_id: str | None = None
+    google_drive_exclude_folder_ids: str = ""  # Comma-separated folder IDs to exclude
 
     # Server Configuration
     host: str = "0.0.0.0"
