@@ -225,8 +225,13 @@ class SlackEventHandler:
         # Resolve user ID to display name
         user_name = await self._get_user_display_name(user_id)
         
+        # Sanitize user text to prevent injection attacks where a user tries to
+        # impersonate another by injecting fake "[From: X]" tags
+        # Remove any bracketed prefixes that look like identity tags
+        sanitized_text = re.sub(r'\[From:\s*[^\]]*\]\s*', '', text)
+        
         # Prefix message with user identity so the bot knows who is speaking
-        message_with_identity = f"[From: {user_name}] {text}"
+        message_with_identity = f"[From: {user_name}] {sanitized_text}"
 
         try:
             # Get response from chatbot

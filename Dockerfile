@@ -4,8 +4,11 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-# Install git for wiki cloning
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# Install git for wiki cloning, tesseract for PDF OCR, poppler for pdf2image
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    tesseract-ocr \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Enable bytecode compilation for faster startup

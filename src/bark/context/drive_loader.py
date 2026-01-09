@@ -14,6 +14,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
 import openpyxl
+import pytesseract
+from pdf2image import convert_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +244,8 @@ class DriveLoader:
             "application/vnd.google-apps.spreadsheet",
             "application/vnd.google-apps.presentation",
             "text/plain",
-            "text/markdown"
+            "text/markdown",
+            "application/pdf",
         ]
         if include_folders:
             mime_types.append("application/vnd.google-apps.folder")
@@ -295,6 +298,9 @@ class DriveLoader:
             elif mime_type in ["text/plain", "text/markdown"]:
                 # Download text file
                 content = self._download_file(service, file_id)
+            elif mime_type == "application/pdf":
+                # Extract text from PDF via OCR
+                content = self._extract_pdf_text(service, file_id)
             
             if not content.strip():
                 return []
@@ -390,6 +396,30 @@ class DriveLoader:
             status, done = downloader.next_chunk()
             
         return fh.getvalue().decode("utf-8")
+
+    def _extract_pdf_text(self, service: Any, file_id: str) -> str:
+        """Extract text from a PDF using Tesseract OCR."""
+        # Download the PDF bytes
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+        
+        pdf_bytes = fh.getvalue()
+        
+        # Convert PDF pages to images
+        images = convert_from_bytes(pdf_bytes)
+        
+        # OCR each page
+        text_parts = []
+        for i, image in enumerate(images):
+            page_text = pytesseract.image_to_string(image)
+            if page_text.strip():
+                text_parts.append(f"--- Page {i + 1} ---\n{page_text}")
+        
+        return "\n\n".join(text_parts)
 
     def _split_into_chunks(self, text: str) -> list[str]:
         """Split text into chunks of approximately chunk_size words."""
