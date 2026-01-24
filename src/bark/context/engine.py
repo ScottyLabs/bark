@@ -429,6 +429,84 @@ class ContextEngine:
 
         return "\n".join(output_parts)
 
+    def search_notion_live(self, query: str, max_results: int = 5) -> str:
+        """Search Notion pages using the native API (no indexing required).
+
+        Args:
+            query: Search query
+            max_results: Maximum number of results to return
+
+        Returns:
+            Formatted search results string
+        """
+        notion_loader = self._get_notion_loader()
+        if notion_loader is None:
+            return "Notion integration not configured. Set NOTION_API_KEY in your environment."
+
+        try:
+            results = notion_loader.search(query, max_results=max_results)
+            
+            if not results:
+                return f"No Notion pages found matching '{query}'."
+
+            output_parts = [f"Found {len(results)} Notion pages:\n"]
+
+            for i, result in enumerate(results, 1):
+                title = result.get("title", "Untitled")
+                url = result.get("url", "")
+                content = result.get("content", "")
+
+                output_parts.append(f"### {i}. **{title}**")
+                if url:
+                    output_parts.append(f"*Link: {url}*\n")
+                output_parts.append(content)
+                output_parts.append("")
+
+            return "\n".join(output_parts)
+
+        except Exception as e:
+            logger.error(f"Notion live search failed: {e}")
+            return f"Failed to search Notion: {str(e)}"
+
+    def search_drive_live(self, query: str, max_results: int = 5) -> str:
+        """Search Google Drive files using the native API (no indexing required).
+
+        Args:
+            query: Search query
+            max_results: Maximum number of results to return
+
+        Returns:
+            Formatted search results string
+        """
+        drive_loader = self._get_drive_loader()
+        if drive_loader is None:
+            return "Google Drive integration not configured. Check credentials settings."
+
+        try:
+            results = drive_loader.search(query, max_results=max_results)
+            
+            if not results:
+                return f"No Drive files found matching '{query}'."
+
+            output_parts = [f"Found {len(results)} Drive files:\n"]
+
+            for i, result in enumerate(results, 1):
+                title = result.get("title", "Untitled")
+                url = result.get("url", "")
+                content = result.get("content", "")
+
+                output_parts.append(f"### {i}. **{title}**")
+                if url:
+                    output_parts.append(f"*Link: {url}*\n")
+                output_parts.append(content)
+                output_parts.append("")
+
+            return "\n".join(output_parts)
+
+        except Exception as e:
+            logger.error(f"Drive live search failed: {e}")
+            return f"Failed to search Google Drive: {str(e)}"
+
 
 # Global instance for tools
 _engine: ContextEngine | None = None
@@ -440,3 +518,4 @@ def get_context_engine() -> ContextEngine:
     if _engine is None:
         _engine = ContextEngine()
     return _engine
+

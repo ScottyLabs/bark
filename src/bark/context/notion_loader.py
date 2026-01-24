@@ -110,6 +110,71 @@ class NotionLoader:
 
         return metadata
 
+    def search(self, query: str, max_results: int = 5) -> list[dict]:
+        """Search Notion pages using the native search API.
+
+        Args:
+            query: Search query to match against page titles
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of search results with page info and content preview
+        """
+        results = []
+        
+        try:
+            client = self._get_client()
+            
+            # Use Notion's native search API
+            response = client.search(
+                query=query,
+                filter={"property": "object", "value": "page"},
+                page_size=max_results,
+            )
+            
+            pages = response.get("results", [])
+            logger.info(f"Notion search found {len(pages)} pages for query: {query}")
+            
+            for page in pages:
+                page_id = page["id"]
+                page_title = self._get_page_title(page)
+                page_url = page.get("url", "")
+                
+                # Fetch page content
+                try:
+                    blocks = self._fetch_all_blocks(client, page_id)
+                    content = self._blocks_to_text(blocks)
+                    
+                    # Truncate content for preview
+                    words = content.split()
+                    preview = " ".join(words[:200]) + ("..." if len(words) > 200 else "")
+                    
+                    results.append({
+                        "title": page_title,
+                        "url": page_url,
+                        "page_id": page_id,
+                        "content": preview,
+                        "last_edited": page.get("last_edited_time", ""),
+                    })
+                except APIResponseError as e:
+                    logger.warning(f"Could not fetch content for page {page_title}: {e}")
+                    results.append({
+                        "title": page_title,
+                        "url": page_url,
+                        "page_id": page_id,
+                        "content": "(Content unavailable)",
+                        "last_edited": page.get("last_edited_time", ""),
+                    })
+                    
+        except APIResponseError as e:
+            logger.error(f"Notion search API error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Notion search failed: {e}")
+            raise
+            
+        return results
+
     def _fetch_all_pages(self, client: Client) -> list[dict[str, Any]]:
         """Fetch all pages accessible to the integration.
 

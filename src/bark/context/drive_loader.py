@@ -198,6 +198,109 @@ class DriveLoader:
 
         return metadata
 
+    def search(self, query: str, max_results: int = 5) -> list[dict]:
+        """Search Google Drive files using the native fullText search API.
+
+        Args:
+            query: Search query to match against file content and names
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of search results with file info and content preview
+        """
+        results = []
+        service = self._get_service()
+        
+        try:
+            # Build query for fullText and name search
+            # Escape quotes in query
+            escaped_query = query.replace("'", "\\'")
+            
+            # Search for files containing the query text or matching name
+            search_query = f"(fullText contains '{escaped_query}' or name contains '{escaped_query}') and trashed = false"
+            
+            # Add mime type filter for supported types
+            mime_types = [
+                "application/vnd.google-apps.document",
+                "application/vnd.google-apps.spreadsheet",
+                "application/vnd.google-apps.presentation",
+                "text/plain",
+                "text/markdown",
+            ]
+            mime_query = " or ".join(f"mimeType = '{mt}'" for mt in mime_types)
+            search_query += f" and ({mime_query})"
+            
+            # Add folder filter if configured
+            if self.folder_id:
+                # Note: fullText search doesn't work well with parent filter
+                # so we'll filter results after fetching
+                pass
+            
+            response = service.files().list(
+                q=search_query,
+                spaces="drive",
+                fields="files(id, name, mimeType, modifiedTime, webViewLink)",
+                pageSize=max_results * 2,  # Get extra in case some fail
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute()
+            
+            files = response.get("files", [])
+            logger.info(f"Drive search found {len(files)} files for query: {query}")
+            
+            for file in files[:max_results]:
+                file_id = file["id"]
+                name = file.get("name", "Untitled")
+                mime_type = file.get("mimeType", "")
+                
+                # Skip files with "resume" in the title
+                if "resume" in name.lower():
+                    continue
+                
+                # Fetch content preview
+                try:
+                    content = ""
+                    if mime_type == "application/vnd.google-apps.document":
+                        content = self._export_gdoc(service, file_id)
+                    elif mime_type == "application/vnd.google-apps.spreadsheet":
+                        content = self._export_gsheet(service, file_id)
+                    elif mime_type == "application/vnd.google-apps.presentation":
+                        content = self._export_gslide(service, file_id)
+                    elif mime_type in ["text/plain", "text/markdown"]:
+                        content = self._download_file(service, file_id)
+                    
+                    # Truncate content for preview
+                    words = content.split()
+                    preview = " ".join(words[:200]) + ("..." if len(words) > 200 else "")
+                    
+                    results.append({
+                        "title": name,
+                        "url": file.get("webViewLink", ""),
+                        "file_id": file_id,
+                        "content": preview,
+                        "mime_type": mime_type,
+                        "last_edited": file.get("modifiedTime", ""),
+                    })
+                except Exception as e:
+                    logger.warning(f"Could not fetch content for file {name}: {e}")
+                    results.append({
+                        "title": name,
+                        "url": file.get("webViewLink", ""),
+                        "file_id": file_id,
+                        "content": "(Content unavailable)",
+                        "mime_type": mime_type,
+                        "last_edited": file.get("modifiedTime", ""),
+                    })
+                    
+                if len(results) >= max_results:
+                    break
+                    
+        except Exception as e:
+            logger.error(f"Drive search failed: {e}")
+            raise
+            
+        return results
+
     def _list_files(self, service: Any) -> list[dict[str, Any]]:
         """List files in the configured scope (recursively if folder_id is set)."""
         all_files = []

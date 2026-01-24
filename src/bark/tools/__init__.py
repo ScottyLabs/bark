@@ -19,31 +19,43 @@ async def refresh_context() -> str:
 
 
 @tool(
-    name="refresh_notion_context",
-    description="Refresh the Notion context. Use this when Notion pages may have been updated or added.",
+    name="search_notion",
+    description="Search Notion pages for information. Searches page titles and content in real-time using the Notion API. Use this to find ScottyLabs Notion documents, meeting notes, project pages, etc.",
     parameters={
         "type": "object",
-        "properties": {},
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query to find relevant Notion pages",
+            },
+        },
+        "required": ["query"],
     },
 )
-async def refresh_notion_context() -> str:
-    """Refresh the Notion context by re-ingesting all pages."""
+def search_notion(query: str) -> str:
+    """Search Notion pages using the native API."""
     engine = get_context_engine()
-    return await engine.refresh_notion()
+    return engine.search_notion_live(query)
 
 
 @tool(
-    name="refresh_drive_context",
-    description="Refresh the Google Drive context. Use this when Drive files may have been updated or added.",
+    name="search_drive",
+    description="Search Google Drive files for information. Searches file names and content in real-time using the Drive API. Use this to find ScottyLabs documents, spreadsheets, presentations, etc.",
     parameters={
         "type": "object",
-        "properties": {},
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query to find relevant Drive files",
+            },
+        },
+        "required": ["query"],
     },
 )
-async def refresh_drive_context() -> str:
-    """Refresh the Google Drive context by re-ingesting all files."""
+def search_drive(query: str) -> str:
+    """Search Google Drive files using the native API."""
     engine = get_context_engine()
-    return await engine.refresh_drive()
+    return engine.search_drive_live(query)
 
 
 @tool(
@@ -73,3 +85,4 @@ from bark.tools.memory_tools import (  # noqa: F401, E402
     delete_memory,
     no_reply,
 )
+
