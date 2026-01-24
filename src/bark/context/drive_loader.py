@@ -464,7 +464,7 @@ class DriveLoader:
         return fh.getvalue().decode("utf-8")
 
     def _export_gsheet(self, service: Any, file_id: str) -> str:
-        """Export a Google Sheet to text (parsing all sheets)."""
+        """Export a Google Sheet to text (parsing all sheets) in LLM-readable markdown format."""
         # Export as XLSX
         request = service.files().export_media(
             fileId=file_id, 
@@ -483,13 +483,38 @@ class DriveLoader:
         output = []
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            output.append(f"--- Sheet: {sheet_name} ---")
+            output.append(f"## Sheet: {sheet_name}\n")
             
+            # Collect all rows first to determine column count and detect header
+            rows = []
             for row in ws.iter_rows(values_only=True):
-                # Filter None values and convert to string
-                row_text = [str(cell) for cell in row if cell is not None]
-                if row_text:
-                    output.append(" | ".join(row_text))
+                # Convert cells, replacing None with empty string
+                row_text = [str(cell) if cell is not None else "" for cell in row]
+                # Skip completely empty rows
+                if any(cell.strip() for cell in row_text):
+                    rows.append(row_text)
+            
+            if not rows:
+                output.append("(Empty sheet)\n")
+                continue
+            
+            # Determine max column count
+            max_cols = max(len(row) for row in rows)
+            
+            # Pad rows to have consistent column count
+            for i, row in enumerate(rows):
+                while len(row) < max_cols:
+                    rows[i].append("")
+            
+            # First row is treated as header
+            header = rows[0]
+            output.append("| " + " | ".join(header) + " |")
+            output.append("| " + " | ".join(["---"] * max_cols) + " |")
+            
+            # Data rows with row numbers for reference
+            for row_num, row in enumerate(rows[1:], start=2):
+                output.append("| " + " | ".join(row) + " |")
+            
             output.append("\n")
             
         return "\n".join(output)
