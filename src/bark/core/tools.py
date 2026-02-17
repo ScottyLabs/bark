@@ -146,6 +146,10 @@ _TOOL_ACTION_MAP: dict[str, str] = {
     "flaresolverr_status": "FlareSolverr checked",
     "github_read_file": "GitHub file read",
     "github_read_url": "GitHub file read",
+    "campaign_setup": "Campaign configured",
+    "campaign_get_context": "Campaign context read",
+    "campaign_send_to_channel": "Campaign message sent",
+    "campaign_view_log": "Campaign log viewed",
 }
 
 # Tools that shouldn't be logged (internal / noisy)
@@ -230,6 +234,10 @@ def _build_detail(tool_name: str, kwargs: dict[str, Any]) -> str:
         return f"{owner}/{repo}/{path}"
     elif tool_name == "github_read_url":
         return str(kwargs.get("url", ""))
+    elif tool_name == "campaign_setup":
+        return f"Subject: {kwargs.get('subject', '')}"
+    elif tool_name == "campaign_send_to_channel":
+        return f"To: {kwargs.get('channel', '')}"
 
     # Fallback: show first meaningful kwarg value
     for k, v in kwargs.items():

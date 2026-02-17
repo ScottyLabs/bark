@@ -265,3 +265,44 @@ async def dashboard_activity(limit: int = 50) -> dict[str, Any]:
     entries = al.get_recent(limit=limit)
 
     return {"activity": entries, "total": al.count()}
+
+
+@router.get("/campaign-status")
+async def campaign_status() -> dict[str, Any]:
+    """Return current campaign agent status.
+
+    Shows whether a campaign is configured, its context, and recent
+    activity log entries for the observability dashboard.
+    """
+    from bark.tools.campaign_agent import (
+        load_campaign_context,
+        CAMPAIGN_LOG_FILE,
+        _campaign_threads,
+    )
+    import json as _json
+
+    ctx = load_campaign_context()
+    context_data: dict[str, Any] = {}
+    if ctx.is_loaded():
+        context_data = ctx.to_dict()
+
+    # Read recent log entries
+    recent_log: list[dict[str, Any]] = []
+    try:
+        if CAMPAIGN_LOG_FILE.exists():
+            lines = CAMPAIGN_LOG_FILE.read_text(encoding="utf-8").strip().split("\n")
+            for line in lines[-20:]:
+                try:
+                    recent_log.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+    except Exception:
+        pass
+
+    return {
+        "active": ctx.is_loaded(),
+        "subject": ctx.subject or None,
+        "context": context_data if ctx.is_loaded() else None,
+        "active_threads": len(_campaign_threads),
+        "recent_activity": list(reversed(recent_log)),
+    }

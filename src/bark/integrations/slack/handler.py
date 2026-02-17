@@ -12,6 +12,18 @@ from bark.core.chatbot import ChatBot, Conversation
 from bark.core.config import Settings, get_settings
 
 from bark.core.formatting import SLACK_FORMAT_INSTRUCTIONS
+from bark.tools.campaign_agent import (
+    build_campaign_system_prompt,
+    clear_campaign_context,
+    get_help_text,
+    is_authorized,
+    is_campaign_thread,
+    load_campaign_context,
+    log_campaign_activity,
+    mark_campaign_thread,
+    parse_campaign_command,
+    unmark_campaign_thread,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +117,26 @@ class SlackEventHandler:
 
         return self._conversations[key]
 
+    def _get_or_create_campaign_conversation(
+        self, channel: str, thread_ts: str | None
+    ) -> Conversation:
+        """Get or create a campaign-agent conversation for a channel/thread.
+
+        Uses the campaign-agent system prompt instead of the default one,
+        but still includes the Slack formatting addendum so the campaign
+        persona formats messages correctly and understands identity prefixes.
+        """
+        key = self._get_conversation_key(channel, thread_ts)
+
+        if key not in self._conversations:
+            campaign_prompt = build_campaign_system_prompt()
+            self._conversations[key] = self._chatbot.create_conversation(
+                system_prompt=campaign_prompt,
+                system_prompt_addendum=SLACK_SYSTEM_ADDENDUM,
+            )
+
+        return self._conversations[key]
+
     async def handle_event(self, event: dict[str, Any]) -> dict[str, Any] | None:
         """Handle a Slack event.
 
@@ -165,12 +197,196 @@ class SlackEventHandler:
 
         logger.info(f"Handling mention from {user} in {channel}: {text}")
 
+        # ── Campaign-agent detection ──────────────────────────────
+        cmd = parse_campaign_command(text)
+        if cmd.is_campaign_command:
+            await self._handle_campaign_mention(
+                cmd, text, user, channel, thread_ts or ts, ts,
+            )
+            return
+
         # Get or create conversation for this thread
         conversation = self._get_or_create_conversation(channel, thread_ts)
 
         # Process in background to respond quickly to Slack
         asyncio.create_task(
             self._process_and_respond(text, user, conversation, channel, thread_ts or ts, ts)
+        )
+
+    async def _handle_campaign_mention(
+        self,
+        cmd: Any,
+        raw_text: str,
+        user_id: str,
+        channel: str,
+        thread_ts: str,
+        message_ts: str,
+    ) -> None:
+        """Handle a campaign-agent command in a mention.
+
+        Validates authorization, routes subcommands, and creates campaign
+        conversations as needed.
+        """
+        if not self._client or not self._chatbot:
+            return
+
+        # ── Authorization check ───────────────────────────────────
+        if not is_authorized(user_id):
+            logger.warning(
+                "Unauthorized campaign-agent attempt by user %s", user_id
+            )
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=(
+                        "🚫 You are not authorized to use the Campaign Agent. "
+                        "Only designated users can activate this mode."
+                    ),
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            return
+
+        # ── Handle quick subcommands that don't need the LLM ─────
+        if cmd.subcommand == "help":
+            help_msg = get_help_text()
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=help_msg,
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            self._bot_threads.add((channel, thread_ts))
+            return
+
+        if cmd.subcommand == "status":
+            ctx = load_campaign_context()
+            if ctx.is_loaded():
+                status_msg = (
+                    f"📣 *Campaign Agent Status*\n"
+                    f"*Subject:* {ctx.subject}\n"
+                    f"*Talking points:* {len(ctx.talking_points)}\n"
+                    f"*Target channels:* {', '.join(ctx.target_channels) or '(none)'}\n"
+                    f"*Constraints:* {ctx.constraints or '(none)'}\n"
+                    f"*Last updated:* {ctx.updated_at or 'N/A'}"
+                )
+            else:
+                status_msg = "📣 No campaign context loaded. Use `campaign-agent setup ...` to configure."
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=status_msg,
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            self._bot_threads.add((channel, thread_ts))
+            return
+
+        if cmd.subcommand == "log":
+            from bark.tools.campaign_agent import campaign_view_log
+
+            log_text = campaign_view_log(limit=15)
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=log_text,
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            self._bot_threads.add((channel, thread_ts))
+            return
+
+        if cmd.subcommand == "deactivate":
+            was_active = unmark_campaign_thread(channel, thread_ts)
+            # Also remove the conversation so a fresh one is created if
+            # the user re-activates later.
+            conv_key = self._get_conversation_key(channel, thread_ts)
+            self._conversations.pop(conv_key, None)
+            if was_active:
+                deactivate_msg = (
+                    "🛑 Campaign Agent has been *deactivated* in this thread. "
+                    "Messages will no longer use the campaign persona."
+                )
+            else:
+                deactivate_msg = "ℹ️ This thread was not in campaign mode."
+            log_campaign_activity(
+                action="deactivate",
+                user_id=user_id,
+                channel=channel,
+                detail="Thread deactivated",
+            )
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=deactivate_msg,
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            self._bot_threads.add((channel, thread_ts))
+            return
+
+        if cmd.subcommand == "clear":
+            result_msg = clear_campaign_context()
+            try:
+                await self._client.chat_postMessage(
+                    channel=channel,
+                    text=result_msg,
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
+            self._bot_threads.add((channel, thread_ts))
+            return
+
+        # ── For setup / activate / send — use the campaign conversation ──
+        log_campaign_activity(
+            action=f"command:{cmd.subcommand}",
+            user_id=user_id,
+            channel=channel,
+            detail=raw_text[:200],
+        )
+
+        # Mark this thread as a campaign thread so follow-ups stay in character
+        mark_campaign_thread(channel, thread_ts)
+
+        # Create (or reuse) a campaign conversation for this thread
+        conversation = self._get_or_create_campaign_conversation(channel, thread_ts)
+
+        # Build the user message — for setup, instruct the LLM to call campaign_setup
+        if cmd.subcommand == "setup":
+            if cmd.body:
+                user_text = (
+                    f"Please set up the campaign context with the following information. "
+                    f"Use the campaign_setup tool:\n\n{cmd.body}"
+                )
+            else:
+                user_text = (
+                    "I want to set up a new campaign. Ask me for the details "
+                    "(subject, talking points, goals, positioning, constraints/boundaries, "
+                    "target channels) and then use the campaign_setup tool to save them."
+                )
+        elif cmd.subcommand == "send":
+            user_text = (
+                f"Send the following campaign message to channel {cmd.target_channel}:\n\n"
+                f"{cmd.body}"
+            )
+        else:
+            # General activation — just pass the text through
+            user_text = cmd.body if cmd.body else (
+                "Campaign Agent activated! I'm ready to advocate. "
+                "What would you like me to do?"
+            )
+
+        asyncio.create_task(
+            self._process_and_respond(
+                user_text, user_id, conversation, channel, thread_ts, message_ts,
+            )
         )
 
     async def _handle_message(self, event: dict[str, Any]) -> None:
@@ -192,6 +408,15 @@ class SlackEventHandler:
         # Handle DMs
         if channel_type == "im":
             logger.info(f"Handling DM from {user}: {text}")
+
+            # Check for campaign-agent commands in DMs too
+            cmd = parse_campaign_command(text)
+            if cmd.is_campaign_command:
+                await self._handle_campaign_mention(
+                    cmd, text, user, channel, thread_ts or ts, ts,
+                )
+                return
+
             conversation = self._get_or_create_conversation(channel, thread_ts)
             asyncio.create_task(
                 self._process_and_respond(text, user, conversation, channel, thread_ts or ts, ts)
@@ -201,7 +426,21 @@ class SlackEventHandler:
         # Handle replies in threads where Bark has participated
         if thread_ts and (channel, thread_ts) in self._bot_threads:
             logger.info(f"Handling thread reply from {user} in {channel}: {text}")
-            conversation = self._get_or_create_conversation(channel, thread_ts)
+
+            # If this is a campaign thread, keep using the campaign conversation
+            if is_campaign_thread(channel, thread_ts):
+                conversation = self._get_or_create_campaign_conversation(
+                    channel, thread_ts
+                )
+                log_campaign_activity(
+                    action="thread_reply",
+                    user_id=user,
+                    channel=channel,
+                    detail=text[:200],
+                )
+            else:
+                conversation = self._get_or_create_conversation(channel, thread_ts)
+
             asyncio.create_task(
                 self._process_and_respond(text, user, conversation, channel, thread_ts, ts)
             )
@@ -297,6 +536,10 @@ class SlackEventHandler:
             "docs_get": "reading a document",
             "calendar_list_events": "checking the calendar",
             "calendar_create_event": "creating a calendar event",
+            "campaign_setup": "setting up campaign",
+            "campaign_send_to_channel": "sending campaign message",
+            "campaign_get_context": "loading campaign context",
+            "campaign_view_log": "viewing campaign log",
         }
 
         try:
@@ -328,6 +571,9 @@ class SlackEventHandler:
                     "docs_get": "page_facing_up",
                     "writing_agent": "pencil2",
                     "knowledge_agent": "brain",
+                    "campaign_setup": "loudspeaker",
+                    "campaign_send_to_channel": "mega",
+                    "campaign_get_context": "loudspeaker",
                 }
 
                 # Update the active-tool description for status messages

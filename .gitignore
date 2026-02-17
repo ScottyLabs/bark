@@ -37,6 +37,10 @@ wheels/
 .DS_Store
 Thumbs.db
 
+# Node / Next.js
+node_modules/
+.next/
+
 # Google drive
 credentials.json
 token.json
