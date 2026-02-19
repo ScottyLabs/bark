@@ -1,6 +1,5 @@
 """Tools for reading and writing agent skills to S3 (or Minio)."""
 
-import httpx
 import logging
 from typing import Any
 
@@ -11,7 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_s3_client() -> Any:
-    import boto3
+    try:
+        import boto3
+    except ImportError as exc:
+        raise ImportError(
+            "boto3 is required for S3 skills. Install it with: uv pip install boto3"
+        ) from exc
     settings = get_settings()
     
     if not settings.aws_access_key_id or not settings.aws_secret_access_key:
