@@ -11,13 +11,8 @@ services:
     environment:
       - BARK_VOLUME_PATH=/bark-volume
       - CHROMA_HOST=chromadb
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-      - AWS_REGION=us-east-1
-      - AWS_ENDPOINT_URL_S3=http://minio:9000
     depends_on:
       - chromadb
-      - minio
 
   chromadb:
     image: chromadb/chroma:latest
@@ -30,25 +25,8 @@ services:
       - ANONYMIZED_TELEMETRY=False
       - ALLOW_RESET=True
 
-  minio:
-    image: minio/minio:latest
-    container_name: bark-minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+
 
 volumes:
   chroma_data:
   bark_volume:
-  minio_data:
