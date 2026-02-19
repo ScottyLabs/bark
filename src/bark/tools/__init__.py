@@ -272,6 +272,14 @@ from bark.tools.maps_tools import (  # noqa: F401, E402
     search_places,
 )
 
+# Import campaign agent tools
+from bark.tools.campaign_agent import (  # noqa: F401, E402
+    campaign_setup,
+    campaign_get_context,
+    campaign_send_to_channel,
+    campaign_view_log,
+)
+
 @tool(
     name="save_to_memory",
     description="""Save content from external sources (Drive, Notion, web) to memory.
