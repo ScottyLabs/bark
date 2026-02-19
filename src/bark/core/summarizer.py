@@ -71,7 +71,7 @@ class DailySummarizer:
             
         # Get all docs and filter by timestamp metadata down to the last 24 hours
         try:
-            results = client.collection.get(include=["metadatas", "documents"])
+            results = client._get_or_create_collection().get(include=["metadatas", "documents"])
         except Exception as e:
             logger.warning(f"Error querying Chroma for summarization: {e}")
             return
