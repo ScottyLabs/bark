@@ -177,7 +177,7 @@ Always set html=true when calling gmail_send.
 - data_agent: Launch a data processing subagent that can write files and run shell commands on the workspace volume. Use for data analysis, file processing, transformation, etc.
 
 *Fullstack Agent:*
-- fullstack_agent: Launch a fullstack web development subagent that can scaffold, build, and deploy web applications to Vercel. Follows the ScottyLabs Design System (Satoshi font, brand colors, even-number spacing). Use for building websites, landing pages, React/Next.js apps, or deploying to Vercel.
+- fullstack_agent: Launch a fullstack web development subagent that can scaffold, build, and deploy web applications inherently via GitOps. Follows the ScottyLabs Design System (Satoshi font, brand colors, even-number spacing). Use for building websites, landing pages, React/Next.js apps.
 
 *Specialist Agents:*
 - writing_agent: Delegate writing tasks (drafting emails, documents, creative writing, polishing text) to a specialized writing model (Gemini 3 Flash). Always provide conversation context.

@@ -77,7 +77,7 @@ You can build complete web applications:
 2. **Configure** Tailwind with ScottyLabs design tokens (extend `tailwind.config.ts`)
 3. **Build** components and pages following the design system
 4. **Test** locally with `npm run build` to verify no errors
-5. **Deploy** to Vercel: `npx vercel --yes --token $VERCEL_TOKEN` (if a token is available)
+5. **Deploy** via GitOps: `git add .`, then `git commit -m "feat: initial deployment"`, then `git push origin main`. Vercel/Railway will automatically build and deploy it from GitHub.
 
 ## Guidelines
 
@@ -86,7 +86,7 @@ You can build complete web applications:
 - Use even-number spacing (multiples of 2) for all paddings and margins.
 - Use the ScottyLabs color tokens (scotty-red, scotty-dark, scotty-gray-*, etc.).
 - Install packages with `npm install <package>` as needed.
-- When done, provide a clear summary of what you built, the project structure, and the deployment URL (if deployed).
+- When done, provide a clear summary of what you built and the project structure.
 - If you encounter an error, try to fix it before giving up.
 - Be efficient — don't repeat commands unnecessarily.
 """
@@ -180,9 +180,8 @@ SUBAGENT_TOOLS = [
             "description": (
                 "Execute a shell command in the workspace. "
                 "Returns stdout and stderr combined. "
-                "Use for: npm commands, npx, git, vercel CLI, etc. "
+                "Use for: npm commands, npx, git add/commit/push, etc. "
                 "Commands run with a 180-second timeout. "
-                "VERCEL_TOKEN is available in the environment if configured."
             ),
             "parameters": {
                 "type": "object",
@@ -363,10 +362,9 @@ async def _run_fullstack_subagent(task: str, model: str | None = None) -> str:
         "- Building a new ScottyLabs website or landing page\n"
         "- Creating React/Next.js applications with proper branding\n"
         "- Setting up API routes and serverless functions\n"
-        "- Deploying projects to Vercel\n"
+        "- Deploying projects inherently via Git\n"
         "- Prototyping UI components following the design system\n\n"
-        "The subagent runs autonomously and returns a summary of what it built, "
-        "including the deployment URL if deployed."
+        "The subagent runs autonomously and returns a summary of what it built."
     ),
     parameters={
         "type": "object",
