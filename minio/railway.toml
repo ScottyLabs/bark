@@ -1,0 +1,12 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# In Railway, the PORT environment variable is automatically injected.
+# We instruct Minio to bind its main S3 API to this port so Railway can route traffic.
+startCommand = "server /data --address :${PORT} --console-address :9001"
+healthcheckPath = "/minio/health/live"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
