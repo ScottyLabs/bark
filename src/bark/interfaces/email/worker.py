@@ -142,6 +142,10 @@ class EmailWorker:
                 email.sender_email,
                 email.subject,
             )
+            
+            # Ingest to Chroma
+            self._ingest_to_chroma(email)
+            
             try:
                 replied = await self._handler.process_email(email)
                 if replied:
@@ -160,3 +164,34 @@ class EmailWorker:
 
         # Periodic housekeeping
         self._handler.cleanup_old_conversations()
+
+    def _ingest_to_chroma(self, email: Any) -> None:
+        """Push parsed email to Chroma for semantic memory and summarization."""
+        try:
+            from bark.context.chroma import ChromaClient, Document
+            from uuid import uuid4
+            from datetime import datetime
+            
+            async def _do_ingest():
+                client = ChromaClient(host=self._settings.chroma_host, port=self._settings.chroma_port)
+                try:
+                    client.connect()
+                except Exception:
+                    pass
+                
+                content = f"Subject: {email.subject}\n\n{email.text_body}"
+                doc = Document(
+                    id=str(uuid4()),
+                    content=content,
+                    metadata={
+                        "source_type": "email",
+                        "sender": email.sender_email,
+                        "message_id": email.message_id,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                client.add_documents([doc])
+                
+            asyncio.create_task(_do_ingest())
+        except Exception as e:
+            logger.warning(f"Failed to ingest Email to Chroma: {e}")

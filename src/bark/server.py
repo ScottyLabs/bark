@@ -75,9 +75,15 @@ async def lifespan(app: FastAPI):
                 "(set GOOGLE_DRIVE_CREDENTIALS_JSON or provide a credentials file)"
             )
 
+    # Start Daily Summarizer
+    from bark.core.summarizer import DailySummarizer
+    summarizer = DailySummarizer(settings=settings)
+    await summarizer.start()
+
     yield
 
     # Cleanup
+    await summarizer.stop()
     if email_worker:
         await email_worker.stop()
     if slack_handler:
@@ -162,6 +168,122 @@ async def slack_events(request: Request) -> Response:
                 content=json.dumps(response),
                 media_type="application/json",
             )
+
+    return Response(status_code=200)
+
+
+@app.post("/slack/interactive")
+async def slack_interactive(request: Request) -> Response:
+    """Handle Slack interactive components (e.g. tool approval buttons)."""
+    # Slack sends interactive payloads as form-urlencoded data with 'payload' key
+    from urllib.parse import parse_qs
+    
+    body = await request.body()
+    body_str = body.decode("utf-8")
+    
+    # Simple verification
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    
+    settings = get_settings()
+    if settings.slack_signing_secret:
+        try:
+            verify_slack_signature_from_body(
+                body=body,
+                timestamp=timestamp,
+                signature=signature,
+                signing_secret=settings.slack_signing_secret,
+            )
+        except Exception as e:
+            logger.error(f"Signature verification failed for interactive: {e}")
+            return Response(status_code=401, content="Unauthorized")
+            
+    parsed = parse_qs(body_str)
+    if "payload" not in parsed:
+        return Response(status_code=400, content="No payload")
+        
+    try:
+        payload = json.loads(parsed["payload"][0])
+    except json.JSONDecodeError:
+        return Response(status_code=400, content="Invalid JSON payload")
+        
+    # Process actions
+    if payload.get("type") == "block_actions":
+        actions = payload.get("actions", [])
+        if not actions:
+            return Response(status_code=200)
+            
+        action = actions[0]
+        action_id = action.get("action_id")
+        
+        if action_id in ("admin_approve_tool", "admin_deny_tool"):
+            try:
+                val = json.loads(action.get("value", "{}"))
+                tool_name = val.get("tool")
+                kwargs = val.get("kwargs", {})
+                req_action = val.get("action")
+                requester = val.get("requester")
+                original_channel = val.get("channel")
+                original_ts = val.get("ts")
+                
+                # Update the message in the admin thread to show it was handled
+                admin_channel = payload["channel"]["id"]
+                msg_ts = payload["message"]["ts"]
+                
+                from slack_sdk.web.async_client import AsyncWebClient
+                client = AsyncWebClient(token=settings.slack_bot_token)
+                
+                if req_action == "approve":
+                    # Update admin message
+                    await client.chat_update(
+                        channel=admin_channel,
+                        ts=msg_ts,
+                        text=f"✅ Approved tool execution: `{tool_name}` for <@{requester}>",
+                        blocks=[]
+                    )
+                    
+                    # Execute the tool
+                    logger.info(f"Admin approved executing {tool_name} with args {kwargs}")
+                    from bark.core.tools import get_registry
+                    registry = get_registry()
+                    tool = registry.get(tool_name)
+                    if tool:
+                        try:
+                            result = await tool.execute(**kwargs)
+                            # Notify original channel
+                            if original_channel and original_ts:
+                                await client.chat_postMessage(
+                                    channel=original_channel,
+                                    thread_ts=original_ts,
+                                    text=f"✅ Tool execution for `{tool_name}` was approved and completed:\n```\n{result[:500]}\n```"
+                                )
+                        except Exception as e:
+                            logger.error(f"Error executing approved tool {tool_name}: {e}")
+                            if original_channel and original_ts:
+                                await client.chat_postMessage(
+                                    channel=original_channel,
+                                    thread_ts=original_ts,
+                                    text=f"❌ Tool execution for `{tool_name}` failed: {e}"
+                                )
+                elif req_action == "deny":
+                    # Update admin message
+                    await client.chat_update(
+                        channel=admin_channel,
+                        ts=msg_ts,
+                        text=f"❌ Denied tool execution: `{tool_name}` for <@{requester}>",
+                        blocks=[]
+                    )
+                    
+                    # Notify original channel
+                    if original_channel and original_ts:
+                        await client.chat_postMessage(
+                            channel=original_channel,
+                            thread_ts=original_ts,
+                            text=f"❌ Your request to execute `{tool_name}` was denied by an administrator."
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Failed to process interactive action: {e}")
 
     return Response(status_code=200)
 

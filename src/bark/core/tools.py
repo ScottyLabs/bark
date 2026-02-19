@@ -16,6 +16,7 @@ class Tool(ABC):
     name: str
     description: str
     parameters: dict[str, Any] = field(default_factory=dict)
+    requires_approval: bool = False
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
@@ -51,6 +52,16 @@ class FunctionTool(Tool):
         """Execute the wrapped function."""
         if self.func is None:
             return "Error: No function defined for this tool"
+            
+        if self.requires_approval:
+            import json
+            # Instead of executing, we return a special sentinel containing the tool invocation details.
+            # The interface layer (like Slack) will catch this and trigger the approval flow.
+            payload = {
+                "tool": self.name,
+                "kwargs": kwargs
+            }
+            return f"__STATUS_PENDING_APPROVAL__:{json.dumps(payload)}"
 
         import asyncio
         import inspect
@@ -242,6 +253,7 @@ def tool(
     name: str,
     description: str,
     parameters: dict[str, Any] | None = None,
+    requires_approval: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to register a function as a tool.
 
@@ -255,7 +267,8 @@ def tool(
                     "location": {"type": "string", "description": "City name"}
                 },
                 "required": ["location"]
-            }
+            },
+            requires_approval=False
         )
         async def get_weather(location: str) -> str:
             return f"Weather in {location}: Sunny, 72°F"
@@ -266,6 +279,7 @@ def tool(
             name=name,
             description=description,
             parameters=parameters or {"type": "object", "properties": {}},
+            requires_approval=requires_approval,
             func=func,
         )
         _registry.register(func_tool)

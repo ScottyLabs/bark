@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Slack Configuration
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
+    admin_slack_ids: str = ""  # Comma-separated list of admin user IDs
 
     # Notion Configuration
     notion_api_key: str = ""
@@ -67,6 +68,16 @@ class Settings(BaseSettings):
     wiki_repo_url: str = "https://github.com/ScottyLabs/wiki.wiki.git"
     embedding_model: str = "openai/text-embedding-3-small"
     summarization_model: str = "google/gemini-2.0-flash-lite-001"
+    
+    # S3 / Minio configuration for Skills & Runbooks
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str = "us-east-1"
+    aws_endpoint_url_s3: str | None = None
+    s3_skills_bucket: str = "bark-skills"
+    
+    # Maps Configuration
+    google_maps_api_key: str | None = None
 
     # Bot Configuration
     system_prompt: str = """You are Bark, a helpful assistant for ScottyLabs (scottylabs.org).
@@ -137,6 +148,14 @@ Always set html=true when calling gmail_send.
 - postmaster_list_domains: List Postmaster domains
 - postmaster_get_traffic_stats: Get email traffic stats
 - save_to_memory: Save external content to memory
+- start_background_task: Start a long-running background task
+- geocode_address: Convert an address to lat/lng
+- search_places: Find places matching a query (e.g. food, venues)
+
+*S3 Skills & Configs (Agent Workflows):*
+- list_s3_skills: List available skill runbooks from the S3 server
+- read_s3_skill: Read a skill runbook from the S3 server
+- write_s3_skill: Create or update a skill runbook in the S3 server
 
 *Web Scraping (Firecrawl):*
 - firecrawl_scrape: Scrape a single webpage to markdown

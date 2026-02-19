@@ -165,6 +165,9 @@ class SlackEventHandler:
 
         logger.info(f"Handling mention from {user} in {channel}: {text}")
 
+        # Ingest to Chroma
+        await self._ingest_to_chroma("slack", user, channel, text)
+
         # Get or create conversation for this thread
         conversation = self._get_or_create_conversation(channel, thread_ts)
 
@@ -192,6 +195,7 @@ class SlackEventHandler:
         # Handle DMs
         if channel_type == "im":
             logger.info(f"Handling DM from {user}: {text}")
+            await self._ingest_to_chroma("slack_dm", user, channel, text)
             conversation = self._get_or_create_conversation(channel, thread_ts)
             asyncio.create_task(
                 self._process_and_respond(text, user, conversation, channel, thread_ts or ts, ts)
@@ -201,10 +205,43 @@ class SlackEventHandler:
         # Handle replies in threads where Bark has participated
         if thread_ts and (channel, thread_ts) in self._bot_threads:
             logger.info(f"Handling thread reply from {user} in {channel}: {text}")
+            await self._ingest_to_chroma("slack_thread", user, channel, text)
             conversation = self._get_or_create_conversation(channel, thread_ts)
             asyncio.create_task(
                 self._process_and_respond(text, user, conversation, channel, thread_ts, ts)
             )
+
+    async def _ingest_to_chroma(self, source_type: str, user_id: str, channel: str, text: str) -> None:
+        """Push message to Chroma for semantic memory and summarization."""
+        try:
+            from bark.context.chroma import ChromaClient, Document
+            from uuid import uuid4
+            from datetime import datetime
+            
+            # Fire and forget ingestion
+            async def _do_ingest():
+                client = ChromaClient(host=self.settings.chroma_host, port=self.settings.chroma_port)
+                # Ensure connection
+                try:
+                    client.connect()
+                except Exception:
+                    pass 
+                
+                doc = Document(
+                    id=str(uuid4()),
+                    content=text,
+                    metadata={
+                        "source_type": source_type,
+                        "user_id": user_id,
+                        "channel": channel,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                client.add_documents([doc])
+                
+            asyncio.create_task(_do_ingest())
+        except Exception as e:
+            logger.warning(f"Failed to ingest Slack msg to Chroma: {e}")
 
     async def _process_and_respond(
         self,
@@ -355,12 +392,80 @@ class SlackEventHandler:
                         added_reactions.append(emoji)
                     except Exception:
                         pass  # Best-effort (e.g. emoji already added)
+                        
+            async def _notify_tool_results(name: str, result: str, kwargs: dict[str, Any]) -> None:
+                """Watch tool results for approval requests."""
+                if result.startswith("__STATUS_PENDING_APPROVAL__:"):
+                    try:
+                        import json
+                        payload_str = result.split("__STATUS_PENDING_APPROVAL__:", 1)[1]
+                        payload = json.loads(payload_str)
+                        
+                        # Get Admin IDs
+                        admins_str = self.settings.admin_slack_ids
+                        if not admins_str:
+                            logger.error("A tool requires approval but no ADMIN_SLACK_IDS are set!")
+                            return
+                            
+                        admin_ids = [uid.strip() for uid in admins_str.split(",") if uid.strip()]
+                        
+                        # Build interactive block
+                        blocks = [
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"🚨 *Approval Required* 🚨\nUser <@{user_id}> has requested Bark to execute a protected tool:\n*{name}*"
+                                }
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"```json\n{json.dumps(kwargs, indent=2)}\n```"
+                                }
+                            },
+                            {
+                                "type": "actions",
+                                "elements": [
+                                    {
+                                        "type": "button",
+                                        "text": {"type": "plain_text", "text": "Approve", "emoji": True},
+                                        "style": "primary",
+                                        "value": json.dumps({"action": "approve", "tool": name, "kwargs": kwargs, "requester": user_id, "channel": channel, "ts": thread_ts}),
+                                        "action_id": "admin_approve_tool"
+                                    },
+                                    {
+                                        "type": "button",
+                                        "text": {"type": "plain_text", "text": "Deny", "emoji": True},
+                                        "style": "danger",
+                                        "value": json.dumps({"action": "deny", "tool": name, "kwargs": kwargs, "requester": user_id}),
+                                        "action_id": "admin_deny_tool"
+                                    }
+                                ]
+                            }
+                        ]
+                        
+                        # DM all admins
+                        if self._client:
+                            for admin_id in admin_ids:
+                                try:
+                                    await self._client.chat_postMessage(
+                                        channel=admin_id,
+                                        text="Approval Required for Bark action",
+                                        blocks=blocks
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Failed to DM admin {admin_id}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing pending approval: {e}")
 
             # Get response from chatbot
             response = await self._chatbot.chat(
                 message_with_identity,
                 conversation,
                 on_tool_call=_notify_tool_calls,
+                on_tool_result=_notify_tool_results,
             )
 
             # Check if bot decided not to reply
