@@ -10,6 +10,10 @@ from typing import Any, AsyncGenerator, Callable, Awaitable
 # Called with a list of (tool_name, arguments_json) tuples before execution.
 ToolCallCallback = Callable[[list[tuple[str, str]]], Awaitable[None]]
 
+# Type alias for tool-result notification callback.
+# Called with (tool_name, result_string, kwargs_dict) after execution.
+ToolResultCallback = Callable[[str, str, dict[str, Any]], Awaitable[None]]
+
 import httpx
 
 from bark.core.config import Settings, get_settings
@@ -77,6 +81,7 @@ class OpenRouterClient:
         messages: list[Message],
         model: str | None = None,
         on_tool_call: ToolCallCallback | None = None,
+        on_tool_result: ToolResultCallback | None = None,
     ) -> Message:
         """Send a chat completion request and handle tool calls.
 
@@ -155,6 +160,11 @@ class OpenRouterClient:
                         res = await t.execute(**t_args)
                         dur = time.time() - t_start
                         print(f"[Tool Result] {res[:200]}{'...' if len(res) > 200 else ''} ({dur:.2f}s)")
+                        if on_tool_result:
+                            try:
+                                await on_tool_result(t_name, res, t_args)
+                            except Exception:
+                                pass
                     except Exception as e:
                         dur = time.time() - t_start
                         res = f"Error executing tool: {e}"
@@ -176,6 +186,7 @@ class OpenRouterClient:
         messages: list[Message],
         model: str | None = None,
         on_tool_call: ToolCallCallback | None = None,
+        on_tool_result: ToolResultCallback | None = None,
     ) -> AsyncGenerator[str, None]:
         """Send a chat completion request with streaming and handle tool calls.
 
@@ -297,6 +308,11 @@ class OpenRouterClient:
                         res = await t.execute(**t_args)
                         dur = time.time() - t_start
                         print(f"[Tool Result] {res[:200]}{'...' if len(res) > 200 else ''} ({dur:.2f}s)")
+                        if on_tool_result:
+                            try:
+                                await on_tool_result(t_name, res, t_args)
+                            except Exception:
+                                pass
                     except Exception as e:
                         dur = time.time() - t_start
                         res = f"Error executing tool: {e}"

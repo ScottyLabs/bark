@@ -278,3 +278,138 @@ async def github_read_url(url: str) -> str:
     path = unquote(match.group("path"))
 
     return await _fetch_github_file(owner, repo, path, ref)
+
+
+# ── Tool 3: Create GitHub Repo ──────────────────────────────────────
+
+
+@tool(
+    name="create_github_repo",
+    description=(
+        "Create a new repository on GitHub. "
+        "Requires GITHUB_TOKEN environment variable."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "repo_name": {
+                "type": "string",
+                "description": "Name of the new repository",
+            },
+            "is_private": {
+                "type": "boolean",
+                "description": "Whether the repo should be private (default false)",
+            },
+            "description": {
+                "type": "string",
+                "description": "Repository description",
+            },
+            "org": {
+                "type": "string",
+                "description": "Optional org name. If empty, creates under the authenticated user.",
+            },
+        },
+        "required": ["repo_name"],
+    },
+    requires_approval=True,
+)
+async def create_github_repo(
+    repo_name: str,
+    is_private: bool = False,
+    description: str = "",
+    org: str = "",
+) -> str:
+    """Create a new GitHub repository."""
+    import os
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return "❌ GITHUB_TOKEN environment variable is not set."
+        
+    url = f"https://api.github.com/orgs/{org}/repos" if org else "https://api.github.com/user/repos"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "Bark-Bot"
+    }
+    
+    payload = {
+        "name": repo_name,
+        "private": is_private,
+        "description": description,
+        "auto_init": False
+    }
+    
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code in (201, 200):
+            data = resp.json()
+            return f"✅ Successfully created repository: {data.get('html_url')} (clone URL: {data.get('clone_url')})"
+        return f"❌ Failed to create repository: HTTP {resp.status_code}\n{resp.text}"
+
+
+# ── Tool 4: Git Commit & Push ───────────────────────────────────────
+
+
+@tool(
+    name="git_commit_and_push",
+    description=(
+        "Stage, commit, and push local changes to a GitHub remote. "
+        "Must be run inside a git repository."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "commit_message": {
+                "type": "string",
+                "description": "The commit message",
+            },
+            "repo_path": {
+                "type": "string",
+                "description": "Path to the local repository (default current dir)",
+            },
+            "branch": {
+                "type": "string",
+                "description": "Branch to push to (default main)",
+            },
+        },
+        "required": ["commit_message"],
+    },
+    requires_approval=True,
+)
+async def git_commit_and_push(
+    commit_message: str,
+    repo_path: str = ".",
+    branch: str = "main",
+) -> str:
+    """Commit and push changes to a Git remote."""
+    import asyncio
+    import os
+    
+    cwd = os.path.abspath(repo_path)
+    if not os.path.exists(cwd):
+        return f"❌ Directory not found: {repo_path}"
+        
+    async def run_cmd(*cmd: str) -> tuple[int, str]:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT
+        )
+        out, _ = await proc.communicate()
+        return proc.returncode, out.decode(errors="replace")
+        
+    # Stage
+    rc, out = await run_cmd("git", "add", ".")
+    if rc != 0: return f"❌ Failed to git add:\n{out}"
+    
+    # Commit
+    rc, out = await run_cmd("git", "commit", "-m", commit_message)
+    if rc != 0 and "nothing to commit" not in out:
+        return f"❌ Failed to git commit:\n{out}"
+        
+    # Push
+    rc, out = await run_cmd("git", "push", "origin", branch)
+    if rc != 0: return f"❌ Failed to git push:\n{out}"
+    
+    return "✅ Successfully committed and pushed changes."

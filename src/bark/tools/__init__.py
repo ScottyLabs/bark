@@ -223,6 +223,23 @@ from bark.tools.weather_tools import (  # noqa: F401, E402
 from bark.tools.github_tools import (  # noqa: F401, E402
     github_read_file,
     github_read_url,
+    create_github_repo,
+    git_commit_and_push,
+)
+
+# Import Workspace tools to register them
+from bark.tools.workspace_tools import (  # noqa: F401, E402
+    run_terminal_command,
+    edit_local_file,
+    read_local_file,
+    scaffold_project,
+)
+
+# Import Monitoring tools to register them
+from bark.tools.monitoring_tools import (  # noqa: F401, E402
+    check_github_actions,
+    read_posthog_events,
+    read_railway_logs,
 )
 
 # Import agent team tools
@@ -239,6 +256,22 @@ from bark.tools.agent_team import (  # noqa: F401, E402
     onboarding_agent,
 )
 
+# Import Parallelism tools
+from bark.core.task_manager import start_background_task_tool  # noqa: F401, E402
+
+# Import S3 Skills tools
+from bark.tools.skills_tools import (  # noqa: F401, E402
+    list_s3_skills,
+    read_s3_skill,
+    write_s3_skill,
+)
+
+# Import Maps tools
+from bark.tools.maps_tools import (  # noqa: F401, E402
+    geocode_address,
+    search_places,
+)
+
 # Import campaign agent tools
 from bark.tools.campaign_agent import (  # noqa: F401, E402
     campaign_setup,
@@ -246,7 +279,6 @@ from bark.tools.campaign_agent import (  # noqa: F401, E402
     campaign_send_to_channel,
     campaign_view_log,
 )
-
 
 @tool(
     name="save_to_memory",

@@ -85,11 +85,20 @@ class Conversation:
                 content = msg.content or ""
                 if "**Your stored memories:**" in content:
                     content = content.split("**Your stored memories:**")[0].rstrip()
-                self.messages[i] = Message(role="system", content=content + memories)
+                if "**Active Background Tasks:**" in content:
+                    content = content.split("**Active Background Tasks:**")[0].rstrip()
+                    
+                # Append memories and tasks
+                from bark.core.task_manager import get_task_manager
+                tasks_summary = get_task_manager().get_task_summary_string()
+                
+                self.messages[i] = Message(role="system", content=content + memories + tasks_summary)
                 return
         
         # No system message found, add one
-        self.messages.insert(0, Message(role="system", content=memories))
+        from bark.core.task_manager import get_task_manager
+        tasks_summary = get_task_manager().get_task_summary_string()
+        self.messages.insert(0, Message(role="system", content=memories + tasks_summary))
 
 
 @dataclass
@@ -143,7 +152,8 @@ class ChatBot:
         self,
         message: str,
         conversation: Conversation | None = None,
-        on_tool_call: ToolCallCallback | None = None,
+        on_tool_call: "ToolCallCallback | None" = None,
+        on_tool_result: "ToolResultCallback | None" = None,
     ) -> str:
         """Send a message and get a response.
 
@@ -169,7 +179,9 @@ class ChatBot:
 
         # Get response from OpenRouter
         response = await self._client.chat(
-            conversation.get_messages(), on_tool_call=on_tool_call
+            conversation.get_messages(), 
+            on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
         )
 
         # Add response to conversation
@@ -182,6 +194,8 @@ class ChatBot:
         self,
         message: str,
         conversation: Conversation | None = None,
+        on_tool_call: "ToolCallCallback | None" = None,
+        on_tool_result: "ToolResultCallback | None" = None,
     ) -> AsyncGenerator[str, None]:
         """Send a message and get a streaming response.
 
@@ -207,7 +221,11 @@ class ChatBot:
 
         # Get streaming response from OpenRouter
         full_content = ""
-        async for chunk in self._client.stream_chat(conversation.get_messages()):
+        async for chunk in self._client.stream_chat(
+            conversation.get_messages(), 
+            on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
+        ):
             full_content += chunk
             yield chunk
 
