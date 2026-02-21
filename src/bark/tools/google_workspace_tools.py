@@ -188,6 +188,12 @@ def _extract_body(payload: dict) -> str:
                     "References headers for proper threading."
                 ),
             },
+            "bcc": {
+                "type": "string",
+                "description": (
+                    "Comma-separated email addresses for BCC recipients."
+                ),
+            },
         },
         "required": ["to", "subject", "body"],
     },
@@ -199,6 +205,7 @@ def gmail_send(
     html: bool = False,
     thread_id: str = "",
     in_reply_to: str = "",
+    bcc: str = "",
 ) -> str:
     """Send an email, optionally threaded as a reply."""
     auth = get_google_auth()
@@ -211,6 +218,8 @@ def gmail_send(
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
         message["References"] = in_reply_to
+    if bcc:
+        message["Bcc"] = bcc
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
     send_body: dict[str, str] = {"raw": raw}
