@@ -161,6 +161,9 @@ _TOOL_ACTION_MAP: dict[str, str] = {
     "campaign_get_context": "Campaign context read",
     "campaign_send_to_channel": "Campaign message sent",
     "campaign_view_log": "Campaign log viewed",
+    "chat_list_spaces": "Chat spaces listed",
+    "chat_send_message": "Chat message sent",
+    "chat_read_messages": "Chat messages read",
 }
 
 # Tools that shouldn't be logged (internal / noisy)

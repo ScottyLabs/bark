@@ -128,6 +128,7 @@ from bark.tools.google_workspace_tools import (  # noqa: F401, E402
     # Chat
     chat_list_spaces,
     chat_send_message,
+    chat_read_messages,
     # Meet
     meet_create_space,
     meet_list_conference_records,

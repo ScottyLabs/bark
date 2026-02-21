@@ -1001,6 +1001,39 @@ def forms_list_responses(form_id: str, max_results: int = 20) -> str:
 # GOOGLE CHAT TOOLS
 # =============================================================================
 
+_CHAT_API_HELP = (
+    "❌ Google Chat API is not enabled or not accessible.\n\n"
+    "To fix this, a Workspace admin needs to:\n"
+    "1. Go to https://console.cloud.google.com/apis/library/chat.googleapis.com\n"
+    "2. Select the correct GCP project\n"
+    "3. Click **Enable** to activate the Google Chat API\n"
+    "4. Ensure the service account / OAuth client has the `chat.spaces` and "
+    "`chat.messages` scopes\n"
+    "5. If using a Chat app, configure it at "
+    "https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat\n\n"
+    "Once enabled, re-authenticate (delete token.json) if using user OAuth."
+)
+
+
+def _handle_chat_error(e: Exception, action: str) -> str:
+    """Return a user-friendly error message for Chat API failures."""
+    err_str = str(e)
+    if "has not been used" in err_str or "is disabled" in err_str or "PERMISSION_DENIED" in err_str:
+        logger.error("Google Chat API not enabled: %s", e)
+        return _CHAT_API_HELP
+    if "404" in err_str or "not found" in err_str.lower():
+        logger.error("Chat resource not found: %s", e)
+        return f"❌ {action} failed — resource not found. Check that the space name is correct (format: `spaces/AAAA...`)."
+    if "403" in err_str or "UNAUTHENTICATED" in err_str:
+        logger.error("Chat auth error: %s", e)
+        return (
+            f"❌ {action} failed — permission denied. Ensure the credentials have "
+            "the `chat.spaces` and `chat.messages` OAuth scopes and that the Chat API "
+            "is enabled in the GCP project."
+        )
+    logger.error("Chat API error during %s: %s", action, e)
+    return f"❌ {action} failed: {e}"
+
 
 @tool(
     name="chat_list_spaces",
@@ -1009,36 +1042,43 @@ def forms_list_responses(form_id: str, max_results: int = 20) -> str:
 )
 def chat_list_spaces() -> str:
     """List Chat spaces."""
-    auth = get_google_auth()
-    svc = auth.chat
+    try:
+        auth = get_google_auth()
+        svc = auth.chat
 
-    result = svc.spaces().list().execute()
-    spaces = result.get("spaces", [])
+        result = svc.spaces().list().execute()
+        spaces = result.get("spaces", [])
 
-    if not spaces:
-        return "No Chat spaces found."
+        if not spaces:
+            return "No Chat spaces found."
 
-    lines = ["Chat spaces:"]
-    for sp in spaces:
-        name = sp.get("displayName", sp.get("name", "?"))
-        sp_type = sp.get("spaceType", sp.get("type", "?"))
-        lines.append(f"- **{name}** (type: {sp_type}, id: `{sp['name']}`)")
-    return "\n".join(lines)
+        lines = ["Chat spaces:"]
+        for sp in spaces:
+            name = sp.get("displayName", sp.get("name", "?"))
+            sp_type = sp.get("spaceType", sp.get("type", "?"))
+            lines.append(f"- **{name}** (type: {sp_type}, id: `{sp['name']}`)")
+        return "\n".join(lines)
+    except Exception as e:
+        return _handle_chat_error(e, "Listing Chat spaces")
 
 
 @tool(
     name="chat_send_message",
-    description="Send a message to a Google Chat space.",
+    description=(
+        "Send a message to a Google Chat space. Use chat_list_spaces first to "
+        "find the space resource name. The message is sent as the authenticated "
+        "bot/user."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "space_name": {
                 "type": "string",
-                "description": "The Chat space resource name (e.g. 'spaces/AAAA...')",
+                "description": "The Chat space resource name (e.g. 'spaces/AAAA...'). Use chat_list_spaces to find this.",
             },
             "text": {
                 "type": "string",
-                "description": "Message text to send",
+                "description": "Message text to send (supports Google Chat formatting)",
             },
         },
         "required": ["space_name", "text"],
@@ -1046,13 +1086,66 @@ def chat_list_spaces() -> str:
 )
 def chat_send_message(space_name: str, text: str) -> str:
     """Send a Chat message."""
-    auth = get_google_auth()
-    svc = auth.chat
+    try:
+        auth = get_google_auth()
+        svc = auth.chat
 
-    result = svc.spaces().messages().create(
-        parent=space_name, body={"text": text}
-    ).execute()
-    return f"✅ Message sent to {space_name}. Message ID: `{result.get('name', '?')}`"
+        result = svc.spaces().messages().create(
+            parent=space_name, body={"text": text}
+        ).execute()
+        return f"✅ Message sent to {space_name}. Message ID: `{result.get('name', '?')}`"
+    except Exception as e:
+        return _handle_chat_error(e, "Sending Chat message")
+
+
+@tool(
+    name="chat_read_messages",
+    description=(
+        "Read recent messages from a Google Chat space. Use chat_list_spaces first "
+        "to find the space resource name."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "space_name": {
+                "type": "string",
+                "description": "The Chat space resource name (e.g. 'spaces/AAAA...'). Use chat_list_spaces to find this.",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Max messages to return (default 25)",
+            },
+        },
+        "required": ["space_name"],
+    },
+)
+def chat_read_messages(space_name: str, max_results: int = 25) -> str:
+    """Read recent messages from a Chat space."""
+    try:
+        auth = get_google_auth()
+        svc = auth.chat
+
+        result = svc.spaces().messages().list(
+            parent=space_name, pageSize=max_results
+        ).execute()
+        messages = result.get("messages", [])
+
+        if not messages:
+            return f"No messages found in {space_name}."
+
+        lines = [f"Recent messages in `{space_name}` ({len(messages)}):"]
+        for msg in messages:
+            sender = msg.get("sender", {}).get("displayName", msg.get("sender", {}).get("name", "?"))
+            text = msg.get("text", "(no text)")
+            created = msg.get("createTime", "?")
+            msg_id = msg.get("name", "?")
+            # Truncate long messages for readability
+            if len(text) > 300:
+                text = text[:300] + "…"
+            lines.append(f"- **{sender}** ({created}):\n  {text}\n  _ID: `{msg_id}`_")
+        return "\n".join(lines)
+    except Exception as e:
+        return _handle_chat_error(e, "Reading Chat messages")
 
 
 # =============================================================================

@@ -136,7 +136,8 @@ Always set html=true when calling gmail_send.
 
 *Chat & Meet:*
 - chat_list_spaces: List Google Chat spaces
-- chat_send_message: Send a Chat message
+- chat_send_message: Send a message to a Chat space
+- chat_read_messages: Read recent messages from a Chat space
 - meet_create_space: Create a new meeting
 - meet_list_conference_records: List past meetings
 
