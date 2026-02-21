@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     email_poll_interval: int = 60  # seconds between Gmail poll cycles
     email_enabled: bool = True  # set to False to disable the email worker
 
+    # Google Chat Polling Configuration
+    gchat_enabled: bool = False  # set to True to enable Google Chat polling
+    gchat_poll_interval: int = 10  # seconds between Chat poll cycles
+    gchat_space_ids: str = ""  # comma-separated Chat space IDs (e.g. "spaces/AAAA,spaces/BBBB")
+
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000

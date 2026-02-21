@@ -14,6 +14,7 @@ from bark.dashboard_api import router as dashboard_router
 from bark.integrations.slack.handler import SlackEventHandler
 from bark.integrations.slack.verification import verify_slack_signature_from_body
 from bark.interfaces.email.worker import EmailWorker
+from bark.interfaces.gchat.worker import GoogleChatWorker
 
 # Import tools to register them
 import bark.tools  # noqa: F401
@@ -28,12 +29,13 @@ logger = logging.getLogger(__name__)
 # Global handler instances
 slack_handler: SlackEventHandler | None = None
 email_worker: EmailWorker | None = None
+gchat_worker: GoogleChatWorker | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global slack_handler, email_worker
+    global slack_handler, email_worker, gchat_worker
 
     settings = get_settings()
 
@@ -75,6 +77,27 @@ async def lifespan(app: FastAPI):
                 "(set GOOGLE_DRIVE_CREDENTIALS_JSON or provide a credentials file)"
             )
 
+    # Initialize Google Chat worker if enabled and Google credentials are available.
+    if settings.gchat_enabled and has_google_creds:
+        try:
+            gchat_worker = GoogleChatWorker(settings=settings)
+            await gchat_worker.start()
+            logger.info(
+                "Google Chat interface initialized — polling %s every %ds",
+                settings.gchat_space_ids or "(no spaces configured)",
+                settings.gchat_poll_interval,
+            )
+        except Exception:
+            logger.exception("Failed to start Google Chat worker")
+            gchat_worker = None
+    else:
+        if not settings.gchat_enabled:
+            logger.info("Google Chat interface disabled (GCHAT_ENABLED=false)")
+        elif not has_google_creds:
+            logger.info(
+                "Google Chat interface not started — no Google credentials found"
+            )
+
     # Start Daily Summarizer
     from bark.core.summarizer import DailySummarizer
     summarizer = DailySummarizer(settings=settings)
@@ -84,6 +107,8 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     await summarizer.stop()
+    if gchat_worker:
+        await gchat_worker.stop()
     if email_worker:
         await email_worker.stop()
     if slack_handler:
