@@ -13,6 +13,7 @@ from typing import Any
 from bark.core.chatbot import ChatBot, Conversation
 from bark.core.config import Settings, get_settings
 from bark.core.formatting import SLACK_FORMAT_INSTRUCTIONS
+from bark.core.language_policy import apply_language_policy
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,11 @@ class GoogleChatHandler:
         if not response or response.strip() == "__NO_REPLY__":
             logger.info("Bot chose not to reply to Chat message %s", msg.name)
             return False
+
+        # Apply Japanese language policy check before sending
+        response = apply_language_policy(
+            response, mode=self.settings.japanese_language_policy
+        )
 
         # Send reply (in the same thread if available)
         sent = await asyncio.to_thread(

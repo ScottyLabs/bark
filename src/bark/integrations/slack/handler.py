@@ -10,6 +10,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from bark.core.chatbot import ChatBot, Conversation
 from bark.core.config import Settings, get_settings
+from bark.core.language_policy import apply_language_policy
 
 from bark.core.formatting import SLACK_FORMAT_INSTRUCTIONS
 from bark.tools.campaign_agent import (
@@ -721,11 +722,14 @@ class SlackEventHandler:
             # Each paragraph becomes a separate Slack message
             messages = re.split(r'(?<!\\)\n\n+', response)
 
+            policy_mode = self.settings.japanese_language_policy
             for msg in messages:
                 msg = msg.strip()
                 if msg and msg != "__NO_REPLY__":
                     # Unescape any escaped newlines
                     msg = msg.replace('\\n', '\n')
+                    # Apply language policy to each individual message segment
+                    msg = apply_language_policy(msg, mode=policy_mode)
                     await self._client.chat_postMessage(
                         channel=channel,
                         text=msg,

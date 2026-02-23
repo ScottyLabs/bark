@@ -1,11 +1,15 @@
 """Main ChatBot class that coordinates conversations."""
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 from bark.core.config import Settings, get_settings
+from bark.core.language_policy import apply_language_policy
 from bark.core.openrouter import Message, OpenRouterClient, ToolCallCallback
 from bark.core.tools import ToolRegistry, get_registry
+
+logger = logging.getLogger(__name__)
 
 
 def _load_memories() -> str:
@@ -179,13 +183,20 @@ class ChatBot:
 
         # Get response from OpenRouter
         response = await self._client.chat(
-            conversation.get_messages(), 
+            conversation.get_messages(),
             on_tool_call=on_tool_call,
             on_tool_result=on_tool_result,
         )
 
         # Add response to conversation
         content = response.content or ""
+
+        # Apply Japanese language policy check on outgoing content
+        if content and content.strip() != "__NO_REPLY__":
+            content = apply_language_policy(
+                content, mode=self.settings.japanese_language_policy
+            )
+
         conversation.add_assistant_message(content)
 
         return content
@@ -222,12 +233,28 @@ class ChatBot:
         # Get streaming response from OpenRouter
         full_content = ""
         async for chunk in self._client.stream_chat(
-            conversation.get_messages(), 
+            conversation.get_messages(),
             on_tool_call=on_tool_call,
             on_tool_result=on_tool_result,
         ):
             full_content += chunk
             yield chunk
+
+        # Apply Japanese language policy check on the fully-assembled
+        # response.  For streaming, the chunks have already been yielded so
+        # we can only log / record the policy result — the conversation
+        # history stores the filtered version.
+        if full_content and full_content.strip() != "__NO_REPLY__":
+            filtered = apply_language_policy(
+                full_content, mode=self.settings.japanese_language_policy
+            )
+            if filtered != full_content:
+                logger.warning(
+                    "Language policy altered streamed response "
+                    "(mode=%s). Conversation history stores filtered text.",
+                    self.settings.japanese_language_policy,
+                )
+                full_content = filtered
 
         # Add response to conversation
         conversation.add_assistant_message(full_content)
@@ -250,5 +277,13 @@ class ChatBot:
         ]
 
         response = await self._client.chat(messages)
-        return response.content or ""
+        content = response.content or ""
+
+        # Apply Japanese language policy check
+        if content and content.strip() != "__NO_REPLY__":
+            content = apply_language_policy(
+                content, mode=self.settings.japanese_language_policy
+            )
+
+        return content
 

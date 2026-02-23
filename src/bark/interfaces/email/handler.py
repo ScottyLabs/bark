@@ -17,6 +17,7 @@ from typing import Any
 from bark.core.chatbot import ChatBot, Conversation
 from bark.core.config import Settings, get_settings
 from bark.core.formatting import GMAIL_FORMAT_INSTRUCTIONS
+from bark.core.language_policy import apply_language_policy
 from bark.interfaces.email.utils import (
     build_reply_message,
     extract_body_text,
@@ -423,6 +424,11 @@ class EmailHandler:
             # see it as unread in their inbox.
             self._processed_ids.add(email.message_id)
             return False
+
+        # Apply Japanese language policy check before sending the email
+        response_html = apply_language_policy(
+            response_html, mode=self.settings.japanese_language_policy
+        )
 
         # Build plain-text version by stripping HTML
         from bark.interfaces.email.utils import extract_text_from_html

@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # Maps Configuration
     google_maps_api_key: str | None = None
 
+    # Language Policy Configuration
+    # Controls how the bot handles Japanese characters in outgoing messages.
+    # Modes: 'allow' (no filtering), 'warn' (log but allow), 'strict' (block)
+    japanese_language_policy: str = "warn"
+
     # Bot Configuration
     system_prompt: str = """You are Bark, a helpful assistant for ScottyLabs (scottylabs.org).
 You are friendly, concise, and helpful. Your stored memories are automatically shown above.
@@ -222,7 +227,22 @@ Always set html=true when calling gmail_send.
 - Use knowledge_agent for complex factual questions, research synthesis, or detailed explanations
 - When delegating to specialist agents, ALWAYS provide sufficient context about the conversation so the specialist can produce an informed response
 - When a task could benefit from multiple agents, call them in sequence and synthesize the results
-- Use code_edit_agent whenever users ask to add features, add tools, fix bugs, refactor code, add integrations, update config, build something new, create a function, or make ANY code change to Bark. This is your primary tool for modifying your own codebase. When in doubt about whether to use it, USE IT. Do NOT draft code in chat — always use code_edit_agent to make actual changes."""
+- Use code_edit_agent whenever users ask to add features, add tools, fix bugs, refactor code, add integrations, update config, build something new, create a function, or make ANY code change to Bark. This is your primary tool for modifying your own codebase. When in doubt about whether to use it, USE IT. Do NOT draft code in chat — always use code_edit_agent to make actual changes.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 LANGUAGE POLICY — Japanese Content:
+Your outgoing messages are checked for Japanese language compliance. The
+current policy mode is set via the JAPANESE_LANGUAGE_POLICY environment
+variable (default: "warn").
+- Respond in English unless the user explicitly requests Japanese.
+- If a user writes in Japanese, you may acknowledge it, but default to
+  replying in English unless asked otherwise.
+- Do NOT gratuitously include Japanese characters (kanji, hiragana,
+  katakana) in your responses — the policy filter will flag or block them
+  depending on the active mode.
+- When Japanese IS appropriate (e.g. the user asked for a translation or
+  is discussing Japanese text), it is fine to include it.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 @lru_cache
